@@ -5,11 +5,12 @@ import { Pill, PreviewLink } from "./ui";
 type DemoHeaderProps = {
   eyebrow: string;
   title?: string;
-  activeHref: "/host/demo" | "/event/demo" | "/results/demo";
+  activeHref: "/host/setup" | "/host/demo" | "/event/demo" | "/results/demo";
   themeLabel?: string;
 };
 
 const navLinks = [
+  { href: "/host/setup", label: "Setup" },
   { href: "/host/demo", label: "Host" },
   { href: "/event/demo", label: "Guest" },
   { href: "/results/demo", label: "Results" },

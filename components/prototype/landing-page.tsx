@@ -11,6 +11,12 @@ const previewStats = [
 
 const demoLinks = [
   {
+    href: "/host/setup",
+    title: "Setup Demo",
+    description: "Import CSV songs and preview matchups.",
+    tone: "neutral" as const,
+  },
+  {
     href: "/host/demo",
     title: "Host Demo",
     description: "Command center for the room.",
@@ -81,7 +87,7 @@ export function LandingPage() {
               ))}
             </div>
 
-            <div className="mt-8 grid max-w-4xl gap-3 lg:grid-cols-3">
+            <div className="mt-8 grid max-w-4xl gap-3 sm:grid-cols-2 xl:grid-cols-4">
               {demoLinks.map((link) => (
                 <Panel className="p-4" key={link.href}>
                   <Pill tone={link.tone}>{link.title}</Pill>

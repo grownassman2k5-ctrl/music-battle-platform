@@ -10,13 +10,27 @@ import {
 import { AmbientMusicBackground } from "./ambient-music-background";
 import { ChatPanel } from "./chat-panel";
 import { DemoHeader } from "./demo-header";
+import { GeneratedEventDemoPage } from "./generated-demo-pages";
 import { MatchupBoard } from "./matchup-board";
 import { PastResultsPreview } from "./past-results-preview";
 import { RoundOverview } from "./round-overview";
 import { Scoreboard } from "./scoreboard";
 import { Panel, Pill } from "./ui";
+import { useLocalBattleSetup } from "./use-local-battle-setup";
 
 export function EventDemoPage() {
+  const localSetup = useLocalBattleSetup();
+
+  if (localSetup) {
+    return (
+      <GeneratedEventDemoPage key={localSetup.generatedAt} setup={localSetup} />
+    );
+  }
+
+  return <MockEventDemoPage />;
+}
+
+function MockEventDemoPage() {
   const currentRound = mockRounds[Math.max(0, mockBattleEvent.currentRound - 1)];
   const [selectedSide, setSelectedSide] = useState<ArtistSide | null>(null);
   const scoreboard = useMemo(

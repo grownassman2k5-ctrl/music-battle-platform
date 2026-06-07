@@ -8,6 +8,7 @@ import {
 } from "@/lib/mock-battle";
 import { AmbientMusicBackground } from "./ambient-music-background";
 import { DemoHeader } from "./demo-header";
+import { GeneratedHostDemoPage } from "./generated-demo-pages";
 import { HostRoleControls } from "./host-role-controls";
 import { MatchupBoard } from "./matchup-board";
 import { ModerationPanel } from "./moderation-panel";
@@ -16,10 +17,23 @@ import { RoundOverview } from "./round-overview";
 import { Scoreboard } from "./scoreboard";
 import { ThemeSelector } from "./theme-selector";
 import { MockButton, Panel, Pill } from "./ui";
+import { useLocalBattleSetup } from "./use-local-battle-setup";
 
 type HostStatus = "Ready" | "Round started" | "Voting open" | "Voting closed" | "Winner revealed" | "Battle complete";
 
 export function HostDemoPage() {
+  const localSetup = useLocalBattleSetup();
+
+  if (localSetup) {
+    return (
+      <GeneratedHostDemoPage key={localSetup.generatedAt} setup={localSetup} />
+    );
+  }
+
+  return <MockHostDemoPage />;
+}
+
+function MockHostDemoPage() {
   const [roundIndex, setRoundIndex] = useState(
     Math.max(0, mockBattleEvent.currentRound - 1),
   );

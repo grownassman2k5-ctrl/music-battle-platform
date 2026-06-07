@@ -1,3 +1,5 @@
+"use client";
+
 import {
   buildScoreboard,
   getWinnerSong,
@@ -6,10 +8,27 @@ import {
 } from "@/lib/mock-battle";
 import { AmbientMusicBackground } from "./ambient-music-background";
 import { DemoHeader } from "./demo-header";
+import { GeneratedResultsDemoPage } from "./generated-demo-pages";
 import { Scoreboard } from "./scoreboard";
 import { Panel, Pill } from "./ui";
+import { useLocalBattleSetup } from "./use-local-battle-setup";
 
 export function ResultsDemoPage() {
+  const localSetup = useLocalBattleSetup();
+
+  if (localSetup) {
+    return (
+      <GeneratedResultsDemoPage
+        key={localSetup.generatedAt}
+        setup={localSetup}
+      />
+    );
+  }
+
+  return <MockResultsDemoPage />;
+}
+
+function MockResultsDemoPage() {
   const scoreboard = buildScoreboard(mockRounds, mockRounds.length);
   const finalWinner = scoreboard.reduce((leader, entry) =>
     entry.score > leader.score ? entry : leader,
