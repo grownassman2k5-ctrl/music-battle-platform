@@ -1,12 +1,33 @@
 import { mockBattleEvent } from "@/lib/mock-battle";
 import { AmbientMusicBackground } from "./ambient-music-background";
 import { JoinEventCard } from "./join-event-card";
-import { Pill, PreviewLink } from "./ui";
+import { Panel, Pill, PreviewLink } from "./ui";
 
 const previewStats = [
   ["40", "song bracket"],
   ["120s", "default timer"],
   ["2", "battle sides"],
+];
+
+const demoLinks = [
+  {
+    href: "/host/demo",
+    title: "Host Demo",
+    description: "Command center for the room.",
+    tone: "gold" as const,
+  },
+  {
+    href: "/event/demo",
+    title: "Guest Demo",
+    description: "Audience view for the battle.",
+    tone: "cyan" as const,
+  },
+  {
+    href: "/results/demo",
+    title: "Results Demo",
+    description: "Final board after the smoke clears.",
+    tone: "rose" as const,
+  },
 ];
 
 export function LandingPage() {
@@ -26,8 +47,8 @@ export function LandingPage() {
               <p className="font-semibold text-white">Host controlled</p>
             </div>
           </div>
-          <PreviewLink href="/battle" tone="ghost">
-            Battle room
+          <PreviewLink href="/host/demo" tone="ghost">
+            Host Demo
           </PreviewLink>
         </header>
 
@@ -44,9 +65,8 @@ export function LandingPage() {
               {mockBattleEvent.title}
             </h1>
             <p className="mt-6 max-w-2xl text-lg leading-8 text-zinc-300 sm:text-xl">
-              {mockBattleEvent.subtitle} This first pass shows the party flow:
-              join card, host preview, current matchup, voting controls, chat,
-              and the live scoreboard.
+              {mockBattleEvent.subtitle} Three demo views frame the night from
+              host booth to guest floor to final scoreboard.
             </p>
 
             <div className="mt-8 grid max-w-2xl gap-3 sm:grid-cols-3">
@@ -58,6 +78,20 @@ export function LandingPage() {
                   <p className="text-3xl font-black text-white">{value}</p>
                   <p className="mt-1 text-sm text-zinc-400">{label}</p>
                 </div>
+              ))}
+            </div>
+
+            <div className="mt-8 grid max-w-4xl gap-3 lg:grid-cols-3">
+              {demoLinks.map((link) => (
+                <Panel className="p-4" key={link.href}>
+                  <Pill tone={link.tone}>{link.title}</Pill>
+                  <p className="mt-4 min-h-12 text-sm leading-6 text-zinc-400">
+                    {link.description}
+                  </p>
+                  <PreviewLink className="mt-4 w-full" href={link.href} tone="ghost">
+                    Open {link.title}
+                  </PreviewLink>
+                </Panel>
               ))}
             </div>
           </div>

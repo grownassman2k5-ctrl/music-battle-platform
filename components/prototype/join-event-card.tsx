@@ -45,17 +45,22 @@ export function JoinEventCard({ event }: { event: BattleEvent }) {
         </button>
       </form>
 
-      <div className="mt-5 grid gap-3 sm:grid-cols-2">
-        <PreviewLink className="w-full" href="/battle" tone="primary">
-          Host preview
+      <div className="mt-5 grid gap-3">
+        <PreviewLink className="w-full" href="/host/demo" tone="primary">
+          Host Demo
         </PreviewLink>
-        <PreviewLink className="w-full" href="/battle" tone="secondary">
-          View room
-        </PreviewLink>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <PreviewLink className="w-full" href="/event/demo" tone="secondary">
+            Guest Demo
+          </PreviewLink>
+          <PreviewLink className="w-full" href="/results/demo" tone="ghost">
+            Results Demo
+          </PreviewLink>
+        </div>
       </div>
 
       <p className="mt-4 text-sm leading-6 text-zinc-500">
-        {event.passcodeHint}. Fields are presentational for this prototype.
+        {event.passcodeHint}
       </p>
     </section>
   );

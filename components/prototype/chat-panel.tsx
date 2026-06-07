@@ -55,11 +55,11 @@ export function ChatPanel({ event }: { event: BattleEvent }) {
       <div className="mt-5 grid gap-3">
         <input
           className="h-11 rounded-md border border-white/15 bg-black/30 px-4 text-sm text-white outline-none placeholder:text-zinc-600"
-          placeholder="Chat is static in this prototype"
+          placeholder="Drop a hot take"
           type="text"
         />
         <MockButton className="w-full" tone="ghost">
-          Send mock message
+          Send
         </MockButton>
       </div>
     </Panel>

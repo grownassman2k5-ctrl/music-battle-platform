@@ -17,16 +17,22 @@ type ButtonProps = {
   children: React.ReactNode;
   tone?: ButtonTone;
   className?: string;
+  disabled?: boolean;
+  onClick?: () => void;
 };
 
 export function MockButton({
   children,
   tone = "ghost",
   className = "",
+  disabled = false,
+  onClick,
 }: ButtonProps) {
   return (
     <button
-      className={`inline-flex min-h-11 items-center justify-center rounded-md border px-4 py-2 text-sm font-semibold transition ${buttonToneClass[tone]} ${className}`}
+      className={`inline-flex min-h-11 items-center justify-center rounded-md border px-4 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-45 ${buttonToneClass[tone]} ${className}`}
+      disabled={disabled}
+      onClick={onClick}
       type="button"
     >
       {children}

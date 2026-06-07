@@ -16,12 +16,24 @@ const accentClass = {
   },
 };
 
-export function SongBattleCard({ song }: { song: Song }) {
+type SongBattleCardProps = {
+  song: Song;
+  actionLabel?: string;
+  className?: string;
+  onAction?: () => void;
+};
+
+export function SongBattleCard({
+  song,
+  actionLabel = `Vote ${song.artist}`,
+  className = "",
+  onAction,
+}: SongBattleCardProps) {
   const accent = accentClass[song.accent];
 
   return (
     <article
-      className={`relative min-h-[22rem] overflow-hidden rounded-lg border p-5 ${accent.shell}`}
+      className={`relative min-h-[22rem] overflow-hidden rounded-lg border p-5 transition ${accent.shell} ${className}`}
     >
       <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-transparent via-white/40 to-transparent" />
       <div className="flex items-start justify-between gap-4">
@@ -53,7 +65,9 @@ export function SongBattleCard({ song }: { song: Song }) {
           <p className="text-sm text-zinc-500">Mock vote total</p>
           <p className="mt-1 text-4xl font-black text-white">{song.votes}</p>
         </div>
-        <MockButton tone={accent.button}>Vote {song.artist}</MockButton>
+        <MockButton onClick={onAction} tone={accent.button}>
+          {actionLabel}
+        </MockButton>
       </div>
     </article>
   );
