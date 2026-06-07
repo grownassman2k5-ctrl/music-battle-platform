@@ -1,8 +1,8 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #08080b;
+  --foreground: #f7f7fb;
 }
 
 @theme inline {
@@ -12,15 +12,141 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+}
+
+button,
+a,
+input {
+  letter-spacing: 0;
+}
+
+::selection {
+  background: #f7c948;
+  color: #08080b;
+}
+
+.music-background {
+  isolation: isolate;
+}
+
+.animated-grid {
+  animation: grid-drift 18s linear infinite;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+  background-size: 72px 72px;
+  mask-image: linear-gradient(to bottom, transparent, black 14%, black 82%, transparent);
+}
+
+.stage-wash {
+  background:
+    radial-gradient(circle at 22% 18%, rgba(247, 201, 72, 0.22), transparent 30%),
+    radial-gradient(circle at 78% 24%, rgba(67, 217, 207, 0.18), transparent 34%),
+    linear-gradient(135deg, rgba(159, 26, 62, 0.32), transparent 42%),
+    linear-gradient(225deg, rgba(9, 93, 121, 0.24), transparent 44%);
+}
+
+.record-ring {
+  animation: record-spin 34s linear infinite;
+  background:
+    radial-gradient(circle, transparent 0 18%, rgba(255, 255, 255, 0.16) 19% 20%, transparent 21% 38%, rgba(247, 201, 72, 0.26) 39% 40%, transparent 41% 56%, rgba(67, 217, 207, 0.2) 57% 58%, transparent 59%),
+    conic-gradient(from 90deg, rgba(247, 201, 72, 0.32), rgba(199, 57, 107, 0.18), rgba(67, 217, 207, 0.3), rgba(247, 201, 72, 0.32));
+  filter: blur(0.2px);
+}
+
+.record-ring-slow {
+  animation-duration: 48s;
+  animation-direction: reverse;
+}
+
+.beat-lane {
+  height: 2px;
+  overflow: hidden;
+}
+
+.beat-lane::before {
+  animation: beat-sweep 8s ease-in-out infinite;
+  background: linear-gradient(90deg, transparent, rgba(247, 201, 72, 0.8), rgba(67, 217, 207, 0.7), transparent);
+  content: "";
+  display: block;
+  height: 100%;
+  transform: translateX(-100%);
+  width: 42%;
+}
+
+.beat-lane-two::before {
+  animation-delay: -3.5s;
+}
+
+.sound-bar {
+  animation: bar-bounce 1.6s ease-in-out infinite;
+  height: 22%;
+  min-height: 1.5rem;
+}
+
+.sound-bar:nth-child(2n) {
+  animation-duration: 1.1s;
+  height: 44%;
+}
+
+.sound-bar:nth-child(3n) {
+  animation-duration: 1.35s;
+  height: 64%;
+}
+
+.sound-bar:nth-child(4n) {
+  animation-duration: 1.85s;
+  height: 34%;
+}
+
+.sound-bar:nth-child(5n) {
+  animation-duration: 1.25s;
+  height: 78%;
+}
+
+@keyframes grid-drift {
+  from {
+    background-position: 0 0;
+  }
+
+  to {
+    background-position: 72px 72px;
+  }
+}
+
+@keyframes record-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes beat-sweep {
+  0%,
+  12% {
+    transform: translateX(-110%);
+  }
+
+  62%,
+  100% {
+    transform: translateX(260%);
+  }
+}
+
+@keyframes bar-bounce {
+  0%,
+  100% {
+    transform: scaleY(0.58);
+  }
+
+  50% {
+    transform: scaleY(1);
+  }
 }
