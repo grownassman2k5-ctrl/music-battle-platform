@@ -688,9 +688,12 @@ function PersistedHostExperience({
     useState<AccessAttemptState>({
       status: "idle",
       message: "",
-    });
+  });
   const roundViews = useMemo(() => buildRoundViews(battle), [battle]);
   const currentRound = getCurrentRoundView(battle, roundViews);
+  const nextRound = currentRound
+    ? getNextRoundView(roundViews, currentRound)
+    : null;
   const currentTheme = currentRound
     ? getRoundTheme(setup, currentRound)
     : setup.visualThemes[0] ?? "Custom Battle Stage";
@@ -715,6 +718,7 @@ function PersistedHostExperience({
   const isSaving = actionState.status === "saving";
   const activeTheme = selectedTheme ?? currentTheme;
   const currentRoundId = currentRound?.round.id ?? null;
+  const isCompletingBattle = Boolean(currentRound && !nextRound);
   const currentRoundVoteTotals =
     voteTotalsState.totals?.roundId === currentRoundId
       ? voteTotalsState.totals
@@ -872,6 +876,36 @@ function PersistedHostExperience({
     });
   }
 
+  async function startEvent() {
+    if (!currentRound) {
+      return "No round is available to start the event.";
+    }
+
+    const now = new Date().toISOString();
+    const eventResult = await updateEventState({
+      eventId: battle.event.id,
+      status: "live",
+      currentRoundNumber: currentRound.round.roundNumber,
+      startedAt: battle.event.startedAt ?? now,
+    });
+
+    if (eventResult.error) {
+      return eventResult.error;
+    }
+
+    if (currentRound.round.status === "queued") {
+      const roundResult = await updateRoundState({
+        eventId: battle.event.id,
+        roundId: currentRound.round.id,
+        status: "active",
+      });
+
+      return roundResult.error;
+    }
+
+    return null;
+  }
+
   async function startRound() {
     if (!currentRound) {
       return "No round is available to start.";
@@ -977,7 +1011,6 @@ function PersistedHostExperience({
       return "No current round is available.";
     }
 
-    const nextRound = getNextRoundView(roundViews, currentRound);
     const now = new Date().toISOString();
 
     if (!nextRound) {
@@ -1074,6 +1107,24 @@ function PersistedHostExperience({
           <div className="space-y-5">
             {currentRound ? (
               <>
+                <HostRunOfShowPanel
+                  battle={battle}
+                  currentRound={currentRound}
+                  disabled={isSaving}
+                  nextRound={nextRound}
+                  onStartEvent={() =>
+                    void runHostAction("Start Event", startEvent)
+                  }
+                  setup={setup}
+                  totalRounds={roundViews.length}
+                />
+
+                <HostSongTimerPanel
+                  key={currentRound.round.id}
+                  durationSeconds={setup.defaultSongDuration}
+                  roundView={currentRound}
+                />
+
                 <PersistedRoundOverview
                   roundView={currentRound}
                   statusLabel={getRoundStatusLabel(currentRound.round.status)}
@@ -1082,7 +1133,11 @@ function PersistedHostExperience({
                 />
 
                 {currentRound.round.status === "revealed" ? (
-                  <PersistedRevealCard roundView={currentRound} setup={setup} />
+                  <PersistedRevealCard
+                    roundView={currentRound}
+                    scoreboard={scoreboard}
+                    setup={setup}
+                  />
                 ) : null}
 
                 <PersistedMatchupBoard
@@ -1157,19 +1212,21 @@ function PersistedHostExperience({
                       disabled={isSaving}
                       onClick={() =>
                         void runHostAction(
-                          getNextRoundView(roundViews, currentRound)
-                            ? "Next Round"
-                            : "Complete Battle",
+                          nextRound ? "Next Round" : "Complete Battle",
                           moveToNextRound,
                         )
                       }
-                      tone="secondary"
+                      tone={isCompletingBattle ? "danger" : "secondary"}
                     >
-                      {getNextRoundView(roundViews, currentRound)
-                        ? "Next Round"
-                        : "Complete Battle"}
+                      {nextRound ? "Next Round" : "Complete Battle"}
                     </MockButton>
                   </div>
+                  {isCompletingBattle ? (
+                    <p className="mt-4 rounded-lg border border-[#ff6b8a]/30 bg-[#ff6b8a]/10 p-3 text-sm font-semibold text-[#ffe2e8]">
+                      Completing the battle marks the event finished for guests
+                      and results. Use this only after the final reveal is done.
+                    </p>
+                  ) : null}
                   {actionState.status !== "idle" ? (
                     <ActionFeedback state={actionState} />
                   ) : null}
@@ -1237,6 +1294,9 @@ function PersistedGuestExperience({
   });
   const roundViews = useMemo(() => buildRoundViews(battle), [battle]);
   const currentRound = getCurrentRoundView(battle, roundViews);
+  const nextRound = currentRound
+    ? getNextRoundView(roundViews, currentRound)
+    : null;
   const currentRoundId = currentRound?.round.id ?? null;
   const scoreboard = useMemo(
     () => buildPersistedScoreboard(battle, roundViews),
@@ -1258,6 +1318,11 @@ function PersistedGuestExperience({
       : getGuestStatusHeadline(currentRound?.round.status);
   const participant =
     participantState.status === "joined" ? participantState.participant : null;
+  const isGuestLobby =
+    battle.event.status === "setup" || battle.event.status === "lobby";
+  const voteButtonLabel = votingIsOpen
+    ? "Vote"
+    : getDisabledVoteButtonLabel(currentRound?.round.status);
 
   useEffect(() => {
     let isActive = true;
@@ -1471,8 +1536,17 @@ function PersistedGuestExperience({
                 onJoin={(displayName) => void join(displayName)}
                 state={participantState}
               />
+            ) : isGuestLobby ? (
+              <GuestLobbyPanel battle={battle} setup={setup} />
             ) : currentRound ? (
               <>
+                <GuestPhasePanel
+                  battle={battle}
+                  currentRound={currentRound}
+                  nextRound={nextRound}
+                  selectedSide={selectedSide}
+                />
+
                 <PersistedRoundOverview
                   roundView={currentRound}
                   statusLabel={getRoundStatusLabel(currentRound.round.status)}
@@ -1501,7 +1575,11 @@ function PersistedGuestExperience({
                 </Panel>
 
                 {currentRound.round.status === "revealed" ? (
-                  <PersistedRevealCard roundView={currentRound} setup={setup} />
+                  <PersistedRevealCard
+                    roundView={currentRound}
+                    scoreboard={scoreboard}
+                    setup={setup}
+                  />
                 ) : null}
 
                 <PersistedMatchupBoard
@@ -1510,7 +1588,7 @@ function PersistedGuestExperience({
                   roundView={currentRound}
                   selectedSide={selectedSide}
                   setup={setup}
-                  voteLabel={votingIsOpen ? "Vote" : "Waiting"}
+                  voteLabel={voteButtonLabel}
                 />
               </>
             ) : (
@@ -1729,6 +1807,440 @@ function LiveSyncPill({ status }: { status: LiveSyncStatus }) {
   }[status] as "gold" | "cyan" | "rose";
 
   return <Pill tone={tone}>{label}</Pill>;
+}
+
+function HostRunOfShowPanel({
+  battle,
+  currentRound,
+  disabled,
+  nextRound,
+  onStartEvent,
+  setup,
+  totalRounds,
+}: {
+  battle: PersistedBattle;
+  currentRound: PersistedRoundView;
+  disabled: boolean;
+  nextRound: PersistedRoundView | null;
+  onStartEvent: () => void;
+  setup: LocalBattleSetup;
+  totalRounds: number;
+}) {
+  const canStartEvent =
+    battle.event.status === "setup" || battle.event.status === "lobby";
+  const checklist = getHostRunChecklist(currentRound);
+
+  return (
+    <Panel className="p-5">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="text-sm font-semibold uppercase text-zinc-500">
+            Host run-of-show
+          </p>
+          <h2 className="mt-2 text-2xl font-black text-white">
+            Round {currentRound.round.roundNumber} of {totalRounds}
+          </h2>
+          <p className="mt-2 text-sm leading-6 text-zinc-400">
+            {getRoundTitle(currentRound)} / {getBattleMatchupName(battle)}
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Pill tone={getEventStatusTone(battle.event.status)}>
+            {getEventStatusLabel(battle.event.status)}
+          </Pill>
+          <Pill tone={getRoundStatusTone(currentRound.round.status)}>
+            {getRoundStatusLabel(currentRound.round.status)}
+          </Pill>
+        </div>
+      </div>
+
+      <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
+        <div className="space-y-3">
+          <RunMatchupSummary
+            label="Current matchup"
+            roundView={currentRound}
+            setup={setup}
+          />
+          <RunMatchupSummary
+            label="Next matchup"
+            roundView={nextRound}
+            setup={setup}
+          />
+          <p className="rounded-lg border border-[#43d9cf]/25 bg-[#43d9cf]/10 p-4 text-sm leading-6 text-[#cbfffb]">
+            The app controls the battle flow, voting, chat, reveals, and
+            scoreboard. The host still plays and shares audio outside the app.
+          </p>
+        </div>
+
+        <div className="space-y-3">
+          {canStartEvent ? (
+            <MockButton
+              className="w-full"
+              disabled={disabled}
+              onClick={onStartEvent}
+              tone="primary"
+            >
+              Start Event
+            </MockButton>
+          ) : null}
+          <div className="space-y-2">
+            {checklist.map((item, index) => (
+              <RunChecklistItem
+                index={index}
+                item={item}
+                key={item.label}
+              />
+            ))}
+          </div>
+        </div>
+      </div>
+    </Panel>
+  );
+}
+
+function RunMatchupSummary({
+  label,
+  roundView,
+  setup,
+}: {
+  label: string;
+  roundView: PersistedRoundView | null;
+  setup: LocalBattleSetup;
+}) {
+  if (!roundView) {
+    return (
+      <div className="rounded-lg border border-white/10 bg-black/20 p-4">
+        <p className="text-sm font-semibold uppercase text-zinc-500">{label}</p>
+        <p className="mt-2 text-sm leading-6 text-zinc-400">
+          No next matchup. This is the final round.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-lg border border-white/10 bg-black/20 p-4">
+      <p className="text-sm font-semibold uppercase text-zinc-500">{label}</p>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <RunSongSummary
+          label="Song 1"
+          setup={setup}
+          sideSong={roundView.sideOne}
+        />
+        <RunSongSummary
+          label="Song 2"
+          setup={setup}
+          sideSong={roundView.sideTwo}
+        />
+      </div>
+    </div>
+  );
+}
+
+function RunSongSummary({
+  label,
+  setup,
+  sideSong,
+}: {
+  label: string;
+  setup: LocalBattleSetup;
+  sideSong: PersistedSideSongView;
+}) {
+  const sideConfig = getSideDisplay(setup, sideSong.side.internalSideValue);
+
+  return (
+    <div className="rounded-md border border-white/10 bg-white/10 p-3">
+      <p className="text-xs font-semibold uppercase text-zinc-500">{label}</p>
+      <p className="mt-1 text-sm font-bold text-white">
+        {sideSong.side.artistDisplayName || sideConfig.artistDisplayName}
+      </p>
+      <p className="mt-1 text-sm leading-5 text-zinc-400">
+        {sideSong.song.songTitle}
+      </p>
+      {sideSong.song.appleMusicLink ? (
+        <a
+          className="mt-3 inline-flex rounded-md border border-white/15 bg-white/10 px-3 py-2 text-xs font-semibold uppercase text-[#cbfffb] transition hover:border-[#43d9cf]/60"
+          href={sideSong.song.appleMusicLink}
+          rel="noreferrer"
+          target="_blank"
+        >
+          Open Apple Music
+        </a>
+      ) : (
+        <p className="mt-3 text-xs font-semibold uppercase text-zinc-600">
+          Apple Music link TBD
+        </p>
+      )}
+    </div>
+  );
+}
+
+function RunChecklistItem({
+  index,
+  item,
+}: {
+  index: number;
+  item: {
+    detail: string;
+    done: boolean;
+    label: string;
+  };
+}) {
+  return (
+    <div
+      className={`grid grid-cols-[2rem_minmax(0,1fr)] gap-3 rounded-lg border p-3 ${
+        item.done
+          ? "border-[#43d9cf]/30 bg-[#43d9cf]/10"
+          : "border-white/10 bg-white/10"
+      }`}
+    >
+      <span
+        className={`flex h-8 w-8 items-center justify-center rounded-md text-sm font-black ${
+          item.done
+            ? "bg-[#43d9cf] text-[#071313]"
+            : "border border-white/15 text-zinc-400"
+        }`}
+      >
+        {item.done ? "OK" : index + 1}
+      </span>
+      <span>
+        <span className="block text-sm font-bold text-white">{item.label}</span>
+        <span className="mt-1 block text-xs leading-5 text-zinc-500">
+          {item.detail}
+        </span>
+      </span>
+    </div>
+  );
+}
+
+function HostSongTimerPanel({
+  durationSeconds,
+  roundView,
+}: {
+  durationSeconds: number;
+  roundView: PersistedRoundView;
+}) {
+  const safeDuration = Math.max(1, durationSeconds || 120);
+  const [songMode, setSongMode] = useState<PersistedVoteSide>("sideOne");
+  const [remainingSeconds, setRemainingSeconds] = useState(safeDuration);
+  const [isRunning, setIsRunning] = useState(false);
+  const activeSong = roundView[songMode];
+  const timerStatus =
+    remainingSeconds === 0 ? "complete" : isRunning ? "running" : "paused";
+  const progressPercent =
+    ((safeDuration - remainingSeconds) / safeDuration) * 100;
+
+  useEffect(() => {
+    if (!isRunning) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      setRemainingSeconds((currentSeconds) => {
+        if (currentSeconds <= 1) {
+          setIsRunning(false);
+          return 0;
+        }
+
+        return currentSeconds - 1;
+      });
+    }, 1000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [isRunning]);
+
+  function selectSongMode(nextSongMode: PersistedVoteSide) {
+    setSongMode(nextSongMode);
+    setRemainingSeconds(safeDuration);
+    setIsRunning(false);
+  }
+
+  function resetTimer() {
+    setRemainingSeconds(safeDuration);
+    setIsRunning(false);
+  }
+
+  return (
+    <Panel className="overflow-hidden p-5">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="text-sm font-semibold uppercase text-zinc-500">
+            Host song timer
+          </p>
+          <h2 className="mt-2 text-2xl font-black text-white">
+            {formatTimerSeconds(remainingSeconds)}
+          </h2>
+          <p className="mt-2 text-sm leading-6 text-zinc-400">
+            {songMode === "sideOne" ? "Song 1" : "Song 2"} /{" "}
+            {activeSong.side.artistDisplayName}: {activeSong.song.songTitle}
+          </p>
+        </div>
+        <Pill tone={getTimerStatusTone(timerStatus)}>
+          Timer {timerStatus}
+        </Pill>
+      </div>
+
+      <div className="mt-5 h-3 overflow-hidden rounded-full bg-white/10">
+        <div
+          className={`h-full rounded-full transition-all ${
+            timerStatus === "complete" ? "bg-[#ff6b8a]" : "bg-[#f7c948]"
+          }`}
+          style={{ width: `${progressPercent}%` }}
+        />
+      </div>
+
+      <div className="mt-5 grid gap-3 md:grid-cols-[1fr_auto] md:items-center">
+        <div className="grid gap-2 sm:grid-cols-2">
+          <MockButton
+            onClick={() => selectSongMode("sideOne")}
+            tone={songMode === "sideOne" ? "primary" : "ghost"}
+          >
+            Song 1
+          </MockButton>
+          <MockButton
+            onClick={() => selectSongMode("sideTwo")}
+            tone={songMode === "sideTwo" ? "secondary" : "ghost"}
+          >
+            Song 2
+          </MockButton>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-3">
+          <MockButton
+            disabled={remainingSeconds === 0}
+            onClick={() => setIsRunning(true)}
+            tone="primary"
+          >
+            Start
+          </MockButton>
+          <MockButton onClick={() => setIsRunning(false)} tone="ghost">
+            Pause
+          </MockButton>
+          <MockButton onClick={resetTimer} tone="ghost">
+            Reset
+          </MockButton>
+        </div>
+      </div>
+      <p className="mt-4 text-xs leading-5 text-zinc-500">
+        This timer is local to the host browser and does not change voting,
+        round status, or guest state.
+      </p>
+    </Panel>
+  );
+}
+
+function GuestLobbyPanel({
+  battle,
+  setup,
+}: {
+  battle: PersistedBattle;
+  setup: LocalBattleSetup;
+}) {
+  return (
+    <Panel className="p-6">
+      <Pill tone="gold">Waiting room</Pill>
+      <h2 className="mt-4 text-4xl font-black text-white">
+        Waiting for host to start
+      </h2>
+      <p className="mt-4 max-w-2xl text-base leading-7 text-zinc-400">
+        {battle.event.eventName} is open, but the host has not started the live
+        battle flow yet. Audio will be played or shared by the host outside this
+        app.
+      </p>
+      <div className="mt-5 grid gap-3 sm:grid-cols-3">
+        <SummaryTile label="Event" value={getEventStatusLabel(battle.event.status)} />
+        <SummaryTile
+          label="Matchup"
+          value={getBattleMatchupName(battle)}
+        />
+        <SummaryTile label="Timer" value={`${setup.defaultSongDuration}s`} />
+      </div>
+    </Panel>
+  );
+}
+
+function GuestPhasePanel({
+  battle,
+  currentRound,
+  nextRound,
+  selectedSide,
+}: {
+  battle: PersistedBattle;
+  currentRound: PersistedRoundView;
+  nextRound: PersistedRoundView | null;
+  selectedSide: PersistedVoteSide | null;
+}) {
+  const phase = getGuestPhaseDetails({
+    battle,
+    currentRound,
+    nextRound,
+    selectedSide,
+  });
+
+  return (
+    <Panel className="p-5">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="text-sm font-semibold uppercase text-zinc-500">
+            Guest phase
+          </p>
+          <h2 className="mt-2 text-3xl font-black text-white">
+            {phase.headline}
+          </h2>
+          <p className="mt-3 max-w-2xl text-sm leading-6 text-zinc-400">
+            {phase.body}
+          </p>
+        </div>
+        <Pill tone={phase.tone}>{phase.label}</Pill>
+      </div>
+
+      <div className="mt-5 grid gap-3 md:grid-cols-3">
+        <SummaryTile
+          label="Current round"
+          value={`Round ${currentRound.round.roundNumber}`}
+        />
+        <SummaryTile
+          label="Matchup"
+          value={`${currentRound.sideOne.side.artistDisplayName} vs ${currentRound.sideTwo.side.artistDisplayName}`}
+        />
+        <SummaryTile
+          label="Your vote"
+          value={
+            selectedSide
+              ? currentRound[selectedSide].side.artistDisplayName
+              : "Not selected"
+          }
+        />
+      </div>
+
+      {phase.secondaryMessage ? (
+        <p className="mt-4 rounded-lg border border-white/10 bg-white/10 p-3 text-sm font-semibold text-zinc-300">
+          {phase.secondaryMessage}
+        </p>
+      ) : null}
+
+      {currentRound.round.status === "revealed" && nextRound ? (
+        <p className="mt-4 rounded-lg border border-[#43d9cf]/25 bg-[#43d9cf]/10 p-3 text-sm leading-6 text-[#cbfffb]">
+          Next up: {getRoundTitle(nextRound)} with{" "}
+          {nextRound.sideOne.song.songTitle} vs {nextRound.sideTwo.song.songTitle}.
+        </p>
+      ) : null}
+
+      <p className="mt-4 text-xs leading-5 text-zinc-500">
+        Vote buttons unlock only when the host opens voting.
+      </p>
+    </Panel>
+  );
+}
+
+function SummaryTile({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-white/10 bg-black/20 p-4">
+      <p className="text-xs font-semibold uppercase text-zinc-500">{label}</p>
+      <p className="mt-2 text-sm font-bold leading-5 text-white">{value}</p>
+    </div>
+  );
 }
 
 function HostAccessGate({
@@ -2394,30 +2906,148 @@ function PersistedSongCard({
 
 function PersistedRevealCard({
   roundView,
+  scoreboard,
   setup,
 }: {
   roundView: PersistedRoundView;
+  scoreboard?: ScoreboardEntry[];
   setup: LocalBattleSetup;
 }) {
-  const winner = getPersistedWinner(roundView) ?? getMockWinnerChoice(roundView);
+  const winner = getPersistedWinner(roundView);
+  const totals = getPersistedVoteTotals(roundView.round);
+  const sideOneConfig = getSideDisplay(
+    setup,
+    roundView.sideOne.side.internalSideValue,
+  );
+  const sideTwoConfig = getSideDisplay(
+    setup,
+    roundView.sideTwo.side.internalSideValue,
+  );
+
+  if (!winner) {
+    return (
+      <Panel className="reveal-card overflow-hidden p-6">
+        <Pill tone="gold">Reveal pending</Pill>
+        <h2 className="mt-5 text-4xl font-black text-white sm:text-5xl">
+          Winner not saved yet
+        </h2>
+        <p className="mt-4 max-w-2xl text-base leading-7 text-zinc-400">
+          Vote totals are available, but this round still needs a saved winner.
+          If totals are tied, the host can choose the winner before revealing.
+        </p>
+        <RevealVoteTotals
+          roundView={roundView}
+          sideOneConfig={sideOneConfig}
+          sideTwoConfig={sideTwoConfig}
+          totals={totals}
+        />
+      </Panel>
+    );
+  }
+
   const sideConfig = getSideDisplay(setup, winner.side.internalSideValue);
+  const winnerVotes = totals[winner.voteSide];
+  const runnerUpVotes =
+    winner.voteSide === "sideOne" ? totals.sideTwo : totals.sideOne;
 
   return (
     <Panel className="reveal-card overflow-hidden p-6">
       <Pill tone={winner.voteSide === "sideOne" ? "gold" : "cyan"}>
         Winner revealed
       </Pill>
-      <h2 className="mt-5 text-5xl font-black text-white sm:text-6xl">
-        {winner.side.artistDisplayName || sideConfig.artistDisplayName}
-      </h2>
-      <p className="mt-4 text-2xl font-bold text-zinc-200">
-        {winner.song.songTitle}
-      </p>
-      <p className="mt-4 max-w-2xl text-base leading-7 text-zinc-400">
-        {winner.side.publicDisplayName || sideConfig.publicDisplayName} is saved
-        as the persisted winner for this round.
-      </p>
+      <div className="mt-5 grid gap-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
+        <div>
+          <p className="text-sm font-semibold uppercase text-zinc-400">
+            Round {roundView.round.roundNumber} winner
+          </p>
+          <h2 className="mt-3 text-5xl font-black text-white sm:text-6xl">
+            {winner.side.artistDisplayName || sideConfig.artistDisplayName}
+          </h2>
+          <p className="mt-4 text-2xl font-bold text-zinc-200">
+            {winner.song.songTitle}
+          </p>
+          <p className="mt-4 max-w-2xl text-base leading-7 text-zinc-400">
+            {winner.side.publicDisplayName || sideConfig.publicDisplayName} wins
+            this round {winnerVotes}-{runnerUpVotes}. The overall score below
+            reflects saved round winners.
+          </p>
+        </div>
+
+        <div className="rounded-lg border border-white/10 bg-black/20 p-4">
+          <p className="text-sm font-semibold uppercase text-zinc-500">
+            Overall score
+          </p>
+          <div className="mt-4 grid gap-3">
+            {(scoreboard ?? []).map((entry) => (
+              <div
+                className="flex items-center justify-between gap-3 rounded-md border border-white/10 bg-white/10 px-3 py-2"
+                key={entry.artist}
+              >
+                <span className="text-sm font-bold text-white">
+                  {entry.artist}
+                </span>
+                <span className="font-mono text-2xl font-black text-white">
+                  {entry.score}
+                </span>
+              </div>
+            ))}
+            {scoreboard?.length ? null : (
+              <p className="text-sm leading-6 text-zinc-500">
+                Scoreboard will appear after saved round winners load.
+              </p>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <RevealVoteTotals
+        roundView={roundView}
+        sideOneConfig={sideOneConfig}
+        sideTwoConfig={sideTwoConfig}
+        totals={totals}
+      />
     </Panel>
+  );
+}
+
+function RevealVoteTotals({
+  roundView,
+  sideOneConfig,
+  sideTwoConfig,
+  totals,
+}: {
+  roundView: PersistedRoundView;
+  sideOneConfig: ReturnType<typeof getSideDisplay>;
+  sideTwoConfig: ReturnType<typeof getSideDisplay>;
+  totals: PersistedVoteTotals;
+}) {
+  return (
+    <div className="mt-6 grid gap-3 sm:grid-cols-2">
+      <div className="rounded-lg border border-[#f7c948]/30 bg-[#f7c948]/10 p-4">
+        <p className="text-sm font-semibold uppercase text-[#ffe7a3]">
+          {roundView.sideOne.side.publicDisplayName ||
+            sideOneConfig.publicDisplayName}
+        </p>
+        <p className="mt-2 text-4xl font-black text-white">
+          {totals.sideOne}
+        </p>
+        <p className="mt-2 text-sm text-zinc-400">
+          {roundView.sideOne.song.songTitle}
+        </p>
+      </div>
+      <div className="rounded-lg border border-[#43d9cf]/30 bg-[#43d9cf]/10 p-4">
+        <p className="text-sm font-semibold uppercase text-[#cbfffb]">
+          {roundView.sideTwo.side.publicDisplayName ||
+            sideTwoConfig.publicDisplayName}
+        </p>
+        <p className="mt-2 text-4xl font-black text-white">
+          {totals.sideTwo}
+        </p>
+        <p className="mt-2 text-sm text-zinc-400">
+          {roundView.sideTwo.song.songTitle}
+        </p>
+      </div>
+    </div>
   );
 }
 
@@ -2776,6 +3406,137 @@ function getBattleMatchupName(battle: PersistedBattle) {
     .join(" vs ");
 }
 
+function getHostRunChecklist(currentRound: PersistedRoundView) {
+  const status = currentRound.round.status;
+  const roundStarted = [
+    "playing",
+    "voting_open",
+    "voting_closed",
+    "revealed",
+    "complete",
+  ].includes(status);
+  const votingOpened = [
+    "voting_open",
+    "voting_closed",
+    "revealed",
+    "complete",
+  ].includes(status);
+  const votingClosed = ["voting_closed", "revealed", "complete"].includes(
+    status,
+  );
+  const winnerRevealed = ["revealed", "complete"].includes(status);
+
+  return [
+    {
+      detail: "Moves this round into the live song-playing phase.",
+      done: roundStarted,
+      label: "Start Round",
+    },
+    {
+      detail: `${currentRound.sideOne.song.songTitle} by ${currentRound.sideOne.side.artistDisplayName}.`,
+      done: false,
+      label: "Play Side 1 song using Apple Music",
+    },
+    {
+      detail: `${currentRound.sideTwo.song.songTitle} by ${currentRound.sideTwo.side.artistDisplayName}.`,
+      done: false,
+      label: "Play Side 2 song using Apple Music",
+    },
+    {
+      detail: "Guests can submit or change votes only after this step.",
+      done: votingOpened,
+      label: "Open Voting",
+    },
+    {
+      detail: "Locks voting and saves the latest vote totals.",
+      done: votingClosed,
+      label: "Close Voting",
+    },
+    {
+      detail: "Shows the dramatic reveal and saves the winner.",
+      done: winnerRevealed,
+      label: "Reveal Winner",
+    },
+    {
+      detail: "Move the room to the next matchup or complete the battle.",
+      done: false,
+      label: "Advance to Next Round",
+    },
+  ];
+}
+
+function getGuestPhaseDetails({
+  battle,
+  currentRound,
+  nextRound,
+  selectedSide,
+}: {
+  battle: PersistedBattle;
+  currentRound: PersistedRoundView;
+  nextRound: PersistedRoundView | null;
+  selectedSide: PersistedVoteSide | null;
+}) {
+  if (battle.event.status === "completed") {
+    return {
+      body: "The battle is complete. Check the results page for the final scoreboard.",
+      headline: "Winner revealed",
+      label: "Battle complete",
+      secondaryMessage: "Waiting for the host to wrap up the room.",
+      tone: "cyan" as const,
+    };
+  }
+
+  switch (currentRound.round.status) {
+    case "playing":
+      return {
+        body: "The host is playing the matchup audio outside the app. Listen now, then wait for voting to open.",
+        headline: "Song playing",
+        label: "Listen",
+        secondaryMessage: "Voting will unlock after the host clicks Open Voting.",
+        tone: "gold" as const,
+      };
+    case "voting_open":
+      return {
+        body: selectedSide
+          ? `Your current vote is ${currentRound[selectedSide].side.artistDisplayName}. You can change it until voting closes.`
+          : "Pick the side that won this round. You can change your vote until the host closes voting.",
+        headline: "Voting is open",
+        label: "Vote now",
+        secondaryMessage: "",
+        tone: "cyan" as const,
+      };
+    case "voting_closed":
+      return {
+        body: "Votes are locked while the host checks totals and gets ready for the reveal.",
+        headline: "Voting is closed",
+        label: "Locked",
+        secondaryMessage: "Waiting for winner reveal",
+        tone: "gold" as const,
+      };
+    case "revealed":
+    case "complete":
+      return {
+        body: "The winner has been revealed and the scoreboard has been updated.",
+        headline: "Winner revealed",
+        label: "Reveal",
+        secondaryMessage: nextRound
+          ? "Waiting for next round"
+          : "Waiting for final results",
+        tone: "cyan" as const,
+      };
+    case "active":
+    case "queued":
+    default:
+      return {
+        body: "The host is lining up the next songs. Voting will stay locked until the round starts and voting opens.",
+        headline: "Waiting for host to start",
+        label: "Stand by",
+        secondaryMessage: "Waiting for host to start",
+        tone: "neutral" as const,
+      };
+  }
+}
+
 function getPersistedWinner(roundView: PersistedRoundView) {
   if (
     roundView.round.winnerSideId === roundView.sideOne.side.id ||
@@ -2792,12 +3553,6 @@ function getPersistedWinner(roundView: PersistedRoundView) {
   }
 
   return null;
-}
-
-function getMockWinnerChoice(roundView: PersistedRoundView) {
-  const totals = getMockVoteTotals(roundView.roundIndex);
-
-  return totals.sideOne >= totals.sideTwo ? roundView.sideOne : roundView.sideTwo;
 }
 
 function getWinnerFromVoteTotals(
@@ -2839,14 +3594,33 @@ function getPersistedVoteTotals(round: Round): PersistedVoteTotals {
   };
 }
 
-function getMockVoteTotals(roundIndex: number): PersistedVoteTotals {
-  const winner = roundIndex % 2 === 0 ? "sideOne" : "sideTwo";
-  const winnerTotal = 66 + ((roundIndex * 7) % 18);
-  const runnerUpTotal = 54 + ((roundIndex * 5) % 16);
+function getDisabledVoteButtonLabel(status?: RoundStatus) {
+  if (status === "voting_closed") {
+    return "Voting closed";
+  }
 
-  return winner === "sideOne"
-    ? { sideOne: winnerTotal, sideTwo: runnerUpTotal }
-    : { sideOne: runnerUpTotal, sideTwo: winnerTotal };
+  if (status === "revealed" || status === "complete") {
+    return "Winner revealed";
+  }
+
+  return "Voting locked";
+}
+
+function formatTimerSeconds(seconds: number) {
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+
+  return `${String(minutes).padStart(2, "0")}:${String(
+    remainingSeconds,
+  ).padStart(2, "0")}`;
+}
+
+function getTimerStatusTone(status: "complete" | "paused" | "running") {
+  return {
+    complete: "rose",
+    paused: "neutral",
+    running: "gold",
+  }[status] as "rose" | "neutral" | "gold";
 }
 
 function getFinalWinner(
