@@ -71,6 +71,28 @@ export type PersistedBattle = {
   rounds: Round[];
 };
 
+type UpdateEventStateInput = {
+  eventId: UUID;
+  status?: EventStatus;
+  currentRoundNumber?: number | null;
+  startedAt?: ISODateTimeString | null;
+  completedAt?: ISODateTimeString | null;
+};
+
+type UpdateRoundStateInput = {
+  eventId: UUID;
+  roundId: UUID;
+  status?: RoundStatus;
+  winnerSideId?: UUID | null;
+  winnerSongId?: UUID | null;
+  sideOneVoteCount?: number;
+  sideTwoVoteCount?: number;
+  startedAt?: ISODateTimeString | null;
+  votingOpenedAt?: ISODateTimeString | null;
+  votingClosedAt?: ISODateTimeString | null;
+  revealedAt?: ISODateTimeString | null;
+};
+
 type EventRow = {
   id: UUID;
   event_name: string;
@@ -313,6 +335,120 @@ export async function loadPersistedBattleBySlug(
     });
   } catch (error) {
     return failure("Load persisted battle failed", error);
+  }
+}
+
+export async function updateEventState(
+  input: UpdateEventStateInput,
+): Promise<RepositoryResult<BattleEvent>> {
+  const patch: Partial<{
+    status: EventStatus;
+    current_round_number: number | null;
+    started_at: ISODateTimeString | null;
+    completed_at: ISODateTimeString | null;
+  }> = {};
+
+  if (input.status !== undefined) {
+    patch.status = input.status;
+  }
+
+  if (input.currentRoundNumber !== undefined) {
+    patch.current_round_number = input.currentRoundNumber;
+  }
+
+  if (input.startedAt !== undefined) {
+    patch.started_at = input.startedAt;
+  }
+
+  if (input.completedAt !== undefined) {
+    patch.completed_at = input.completedAt;
+  }
+
+  try {
+    const { data, error } = await getSupabaseBrowserClient()
+      .from("events")
+      .update(patch)
+      .eq("id", input.eventId)
+      .select("*")
+      .single();
+
+    if (error) {
+      return failure("Update event state failed", error);
+    }
+
+    return success(mapBattleEvent(data as EventRow));
+  } catch (error) {
+    return failure("Update event state failed", error);
+  }
+}
+
+export async function updateRoundState(
+  input: UpdateRoundStateInput,
+): Promise<RepositoryResult<Round>> {
+  const patch: Partial<{
+    status: RoundStatus;
+    winner_side_id: UUID | null;
+    winner_song_id: UUID | null;
+    side_one_vote_count: number;
+    side_two_vote_count: number;
+    started_at: ISODateTimeString | null;
+    voting_opened_at: ISODateTimeString | null;
+    voting_closed_at: ISODateTimeString | null;
+    revealed_at: ISODateTimeString | null;
+  }> = {};
+
+  if (input.status !== undefined) {
+    patch.status = input.status;
+  }
+
+  if (input.winnerSideId !== undefined) {
+    patch.winner_side_id = input.winnerSideId;
+  }
+
+  if (input.winnerSongId !== undefined) {
+    patch.winner_song_id = input.winnerSongId;
+  }
+
+  if (input.sideOneVoteCount !== undefined) {
+    patch.side_one_vote_count = input.sideOneVoteCount;
+  }
+
+  if (input.sideTwoVoteCount !== undefined) {
+    patch.side_two_vote_count = input.sideTwoVoteCount;
+  }
+
+  if (input.startedAt !== undefined) {
+    patch.started_at = input.startedAt;
+  }
+
+  if (input.votingOpenedAt !== undefined) {
+    patch.voting_opened_at = input.votingOpenedAt;
+  }
+
+  if (input.votingClosedAt !== undefined) {
+    patch.voting_closed_at = input.votingClosedAt;
+  }
+
+  if (input.revealedAt !== undefined) {
+    patch.revealed_at = input.revealedAt;
+  }
+
+  try {
+    const { data, error } = await getSupabaseBrowserClient()
+      .from("rounds")
+      .update(patch)
+      .eq("id", input.roundId)
+      .eq("event_id", input.eventId)
+      .select("*")
+      .single();
+
+    if (error) {
+      return failure("Update round state failed", error);
+    }
+
+    return success(mapRound(data as RoundRow));
+  } catch (error) {
+    return failure("Update round state failed", error);
   }
 }
 
