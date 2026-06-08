@@ -15,6 +15,12 @@ import {
   saveLocalBattleSetup,
   type LocalSideDisplayConfig,
 } from "@/lib/local-demo-store";
+import {
+  createEvent,
+  createEventSides,
+  saveGeneratedRounds,
+  saveImportedSongs,
+} from "@/lib/supabase/battle-repository";
 import { AmbientMusicBackground } from "./ambient-music-background";
 import { Panel, Pill, PreviewLink, MockButton } from "./ui";
 
@@ -36,9 +42,14 @@ type SideDisplayConfig = LocalSideDisplayConfig;
 type SideDisplayOverrides = Record<
   string,
   Partial<
-    Pick<SideDisplayConfig, "csvValue" | "publicDisplayName" | "artistDisplayName">
+    Pick<
+      SideDisplayConfig,
+      "csvValue" | "publicDisplayName" | "artistDisplayName"
+    >
   >
 >;
+
+type SupabaseSaveStatus = "idle" | "saving" | "success" | "error";
 
 export function HostSetupPage() {
   const router = useRouter();
@@ -51,6 +62,10 @@ export function HostSetupPage() {
   const [csvText, setCsvText] = useState("");
   const [fileName, setFileName] = useState("");
   const [generated, setGenerated] = useState(false);
+  const [supabaseSaveStatus, setSupabaseSaveStatus] =
+    useState<SupabaseSaveStatus>("idle");
+  const [supabaseSaveMessage, setSupabaseSaveMessage] = useState("");
+  const [supabaseEventSlug, setSupabaseEventSlug] = useState("");
   const [sideDisplayOverrides, setSideDisplayOverrides] =
     useState<SideDisplayOverrides>({});
 
@@ -114,6 +129,9 @@ export function HostSetupPage() {
     const file = event.target.files?.[0];
 
     setGenerated(false);
+    setSupabaseSaveStatus("idle");
+    setSupabaseSaveMessage("");
+    setSupabaseEventSlug("");
 
     if (!file) {
       setCsvText("");
@@ -133,6 +151,9 @@ export function HostSetupPage() {
     setCsvText(sampleCsv);
     setFileName("sample-battle-songs.csv");
     setGenerated(false);
+    setSupabaseSaveStatus("idle");
+    setSupabaseSaveMessage("");
+    setSupabaseEventSlug("");
   }
 
   function handleGenerate() {
@@ -154,6 +175,155 @@ export function HostSetupPage() {
     saveLocalBattleSetup(setup);
     setGenerated(true);
     router.push("/host/demo");
+  }
+
+  async function handleSaveToSupabase() {
+    if (!canGenerate) {
+      return;
+    }
+
+    if (!eventPasscode.trim()) {
+      setSupabaseSaveStatus("error");
+      setSupabaseSaveMessage(
+        "Add an event passcode before saving this battle to Supabase.",
+      );
+      return;
+    }
+
+    setSupabaseSaveStatus("saving");
+    setSupabaseSaveMessage("Saving event, sides, songs, and rounds...");
+    setSupabaseEventSlug("");
+
+    try {
+      const eventSlug = createEventSlug(eventName);
+      const passcodeHash = await hashPasscode(eventPasscode.trim());
+      const eventResult = await createEvent({
+        eventName: eventName.trim() || "Untitled Music Battle",
+        eventSlug,
+        passcodeHash,
+        hostDisplayName: "Host",
+        matchupMode,
+        defaultSongDurationSeconds: defaultDuration || 120,
+      });
+
+      if (eventResult.error || !eventResult.data) {
+        throw new Error(eventResult.error ?? "Supabase did not return an event.");
+      }
+
+      const savedEvent = eventResult.data;
+      const sideResult = await createEventSides(
+        savedEvent.id,
+        sideDisplayConfigs.map((config, index) => ({
+          internalSideValue: config.csvValue.trim() || config.sourceCsvValue,
+          publicDisplayName:
+            config.publicDisplayName.trim() || `Side ${index + 1}`,
+          artistDisplayName:
+            config.artistDisplayName.trim() ||
+            config.publicDisplayName.trim() ||
+            `Side ${index + 1}`,
+          displayOrder: index === 0 ? 1 : 2,
+        })),
+      );
+
+      if (sideResult.error || !sideResult.data) {
+        throw new Error(
+          sideResult.error ?? "Supabase did not return saved event sides.",
+        );
+      }
+
+      const sideBySourceValue = new Map(
+        sideDisplayConfigs.map((config, index) => {
+          const savedSide = sideResult.data.find(
+            (side) => side.displayOrder === (index === 0 ? 1 : 2),
+          );
+
+          if (!savedSide) {
+            throw new Error(
+              `Supabase did not return a saved side for ${config.sourceCsvValue}.`,
+            );
+          }
+
+          return [config.sourceCsvValue, savedSide] as const;
+        }),
+      );
+
+      const songsResult = await saveImportedSongs(
+        savedEvent.id,
+        importResult.songs.map((song) => {
+          const side = sideBySourceValue.get(song.side);
+
+          if (!side) {
+            throw new Error(`No saved side matched CSV value "${song.side}".`);
+          }
+
+          return {
+            sideId: side.id,
+            csvRowNumber: song.rowNumber,
+            artist: song.artist,
+            songTitle: song.songTitle,
+            album: song.album || null,
+            genre: song.genre || null,
+            durationSeconds: song.durationSeconds,
+            releaseYear: parseOptionalYear(song.year),
+            mood: song.mood || null,
+            fixedOrder: song.fixedOrder,
+            appleMusicLink: song.appleMusicLink || null,
+          };
+        }),
+      );
+
+      if (songsResult.error || !songsResult.data) {
+        throw new Error(
+          songsResult.error ?? "Supabase did not return saved songs.",
+        );
+      }
+
+      const songByCsvRow = new Map(
+        songsResult.data.map((song) => [song.csvRowNumber, song]),
+      );
+      const roundsResult = await saveGeneratedRounds(
+        savedEvent.id,
+        importResult.matchups.map((matchup) => {
+          const sideOne = sideBySourceValue.get(matchup.sideOne.side);
+          const sideTwo = sideBySourceValue.get(matchup.sideTwo.side);
+          const sideOneSong = songByCsvRow.get(matchup.sideOne.rowNumber);
+          const sideTwoSong = songByCsvRow.get(matchup.sideTwo.rowNumber);
+
+          if (!sideOne || !sideTwo || !sideOneSong || !sideTwoSong) {
+            throw new Error(
+              `Round ${matchup.roundNumber} could not be mapped to saved Supabase rows.`,
+            );
+          }
+
+          return {
+            roundNumber: matchup.roundNumber,
+            themeLabel: getMatchupThemeLabel(
+              matchup.sideOne.mood,
+              matchup.sideTwo.mood,
+            ),
+            sideOneId: sideOne.id,
+            sideTwoId: sideTwo.id,
+            sideOneSongId: sideOneSong.id,
+            sideTwoSongId: sideTwoSong.id,
+          };
+        }),
+      );
+
+      if (roundsResult.error || !roundsResult.data) {
+        throw new Error(
+          roundsResult.error ?? "Supabase did not return saved rounds.",
+        );
+      }
+
+      setSupabaseEventSlug(eventSlug);
+      setSupabaseSaveStatus("success");
+      setSupabaseSaveMessage(
+        `Saved ${eventName || "Untitled Event"} to Supabase with ${roundsResult.data.length} rounds.`,
+      );
+    } catch (error) {
+      setSupabaseSaveStatus("error");
+      setSupabaseSaveMessage(getFriendlyErrorMessage(error));
+    }
   }
 
   function handleResetDemoData() {
@@ -516,6 +686,15 @@ export function HostSetupPage() {
                 >
                   Generate Battle Demo
                 </MockButton>
+                <MockButton
+                  disabled={!canGenerate || supabaseSaveStatus === "saving"}
+                  onClick={handleSaveToSupabase}
+                  tone="secondary"
+                >
+                  {supabaseSaveStatus === "saving"
+                    ? "Saving..."
+                    : "Save Battle to Supabase"}
+                </MockButton>
               </div>
 
               {generated ? (
@@ -523,6 +702,39 @@ export function HostSetupPage() {
                   Battle demo generated locally for {eventName || "Untitled Event"}.
                   Default timer: {defaultDuration || 120} seconds.
                   {eventPasscode ? " Passcode captured in local state." : ""}
+                </div>
+              ) : null}
+
+              {supabaseSaveStatus !== "idle" ? (
+                <div
+                  className={`mt-5 rounded-lg border p-4 text-sm font-semibold ${
+                    supabaseSaveStatus === "success"
+                      ? "border-[#43d9cf]/30 bg-[#43d9cf]/10 text-[#cbfffb]"
+                      : supabaseSaveStatus === "error"
+                        ? "border-[#ff6b8a]/30 bg-[#ff6b8a]/10 text-[#ffe2e8]"
+                        : "border-[#f7c948]/30 bg-[#f7c948]/10 text-[#ffe7a3]"
+                  }`}
+                >
+                  <p>{supabaseSaveMessage}</p>
+                  {supabaseSaveStatus === "success" && supabaseEventSlug ? (
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <PreviewLink href={`/host/${supabaseEventSlug}`}>
+                        Persisted Host
+                      </PreviewLink>
+                      <PreviewLink
+                        href={`/event/${supabaseEventSlug}`}
+                        tone="ghost"
+                      >
+                        Persisted Guest
+                      </PreviewLink>
+                      <PreviewLink
+                        href={`/results/${supabaseEventSlug}`}
+                        tone="ghost"
+                      >
+                        Persisted Results
+                      </PreviewLink>
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
 
@@ -589,6 +801,51 @@ export function HostSetupPage() {
 
 function inferArtistName(side: string, songs: ImportedSong[]) {
   return songs.find((song) => song.side === side)?.artist.trim() ?? "";
+}
+
+function createEventSlug(eventName: string) {
+  const slugBase =
+    eventName
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "music-battle";
+
+  return `${slugBase}-${Date.now().toString(36)}`;
+}
+
+async function hashPasscode(passcode: string) {
+  if (!globalThis.crypto?.subtle) {
+    throw new Error("Browser crypto is unavailable for passcode hashing.");
+  }
+
+  const encodedPasscode = new TextEncoder().encode(passcode);
+  const digest = await globalThis.crypto.subtle.digest(
+    "SHA-256",
+    encodedPasscode,
+  );
+
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function parseOptionalYear(year: string) {
+  const parsedYear = Number(year);
+
+  return Number.isInteger(parsedYear) && parsedYear > 0 ? parsedYear : null;
+}
+
+function getMatchupThemeLabel(sideOneMood: string, sideTwoMood: string) {
+  return sideOneMood || sideTwoMood || "R&B Lounge";
+}
+
+function getFriendlyErrorMessage(error: unknown) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return "Something went wrong while saving to Supabase.";
 }
 
 function StatTile({ label, value }: { label: string; value: string }) {

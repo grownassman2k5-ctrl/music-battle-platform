@@ -39,6 +39,38 @@ export type RepositoryResult<T> =
       error: string;
     };
 
+export const battleTableNames = [
+  "events",
+  "event_sides",
+  "songs",
+  "rounds",
+  "participants",
+  "votes",
+  "chat_messages",
+  "moderation_actions",
+] as const;
+
+export type SupabaseBattleTableName = (typeof battleTableNames)[number];
+
+export type SupabaseTableStatus =
+  | "available"
+  | "missing"
+  | "permission_error"
+  | "unknown_error";
+
+export type SupabaseTableCheck = {
+  tableName: SupabaseBattleTableName;
+  status: SupabaseTableStatus;
+  message: string;
+};
+
+export type PersistedBattle = {
+  event: BattleEvent;
+  sides: EventSide[];
+  songs: Song[];
+  rounds: Round[];
+};
+
 type EventRow = {
   id: UUID;
   event_name: string;
@@ -182,6 +214,105 @@ export async function createEvent(
     return success(mapBattleEvent(data as EventRow));
   } catch (error) {
     return failure("Create event failed", error);
+  }
+}
+
+export async function checkSupabaseTables(
+  tableNames: readonly SupabaseBattleTableName[] = battleTableNames,
+): Promise<RepositoryResult<SupabaseTableCheck[]>> {
+  try {
+    const supabase = getSupabaseBrowserClient();
+    const checks = await Promise.all(
+      tableNames.map(async (tableName) => {
+        const { error } = await withTableCheckTimeout(
+          supabase.from(tableName).select("id").limit(1),
+          tableName,
+        );
+
+        if (!error) {
+          return {
+            tableName,
+            status: "available" as const,
+            message: "Table is reachable.",
+          };
+        }
+
+        return {
+          tableName,
+          ...classifyTableReachabilityError(error),
+        };
+      }),
+    );
+
+    return success(checks);
+  } catch (error) {
+    return failure("Schema check failed", error);
+  }
+}
+
+export async function loadPersistedBattleBySlug(
+  eventSlug: string,
+): Promise<RepositoryResult<PersistedBattle>> {
+  try {
+    const supabase = getSupabaseBrowserClient();
+    const { data: eventData, error: eventError } = await supabase
+      .from("events")
+      .select("*")
+      .eq("event_slug", eventSlug)
+      .maybeSingle();
+
+    if (eventError) {
+      return failure("Load event failed", eventError);
+    }
+
+    if (!eventData) {
+      return {
+        data: null,
+        error: `Load event failed: No event was found for "${eventSlug}".`,
+      };
+    }
+
+    const event = mapBattleEvent(eventData as EventRow);
+
+    const [sidesResult, songsResult, roundsResult] = await Promise.all([
+      supabase
+        .from("event_sides")
+        .select("*")
+        .eq("event_id", event.id)
+        .order("display_order", { ascending: true }),
+      supabase
+        .from("songs")
+        .select("*")
+        .eq("event_id", event.id)
+        .order("fixed_order", { ascending: true, nullsFirst: false })
+        .order("csv_row_number", { ascending: true, nullsFirst: false }),
+      supabase
+        .from("rounds")
+        .select("*")
+        .eq("event_id", event.id)
+        .order("round_number", { ascending: true }),
+    ]);
+
+    if (sidesResult.error) {
+      return failure("Load event sides failed", sidesResult.error);
+    }
+
+    if (songsResult.error) {
+      return failure("Load songs failed", songsResult.error);
+    }
+
+    if (roundsResult.error) {
+      return failure("Load rounds failed", roundsResult.error);
+    }
+
+    return success({
+      event,
+      sides: (sidesResult.data as EventSideRow[]).map(mapEventSide),
+      songs: (songsResult.data as SongRow[]).map(mapSong),
+      rounds: (roundsResult.data as RoundRow[]).map(mapRound),
+    });
+  } catch (error) {
+    return failure("Load persisted battle failed", error);
   }
 }
 
@@ -551,6 +682,78 @@ function failure<T>(label: string, error: unknown): RepositoryResult<T> {
     data: null,
     error: `${label}: ${getErrorMessage(error)}`,
   };
+}
+
+function classifyTableReachabilityError(error: unknown): {
+  status: SupabaseTableStatus;
+  message: string;
+} {
+  const code = getErrorCode(error);
+  const message = getErrorMessage(error);
+  const normalizedMessage = message.toLowerCase();
+
+  if (
+    code === "42P01" ||
+    code === "PGRST205" ||
+    normalizedMessage.includes("does not exist") ||
+    normalizedMessage.includes("could not find the table") ||
+    normalizedMessage.includes("schema cache")
+  ) {
+    return {
+      status: "missing",
+      message,
+    };
+  }
+
+  if (
+    code === "42501" ||
+    code === "PGRST301" ||
+    normalizedMessage.includes("permission") ||
+    normalizedMessage.includes("not authorized") ||
+    normalizedMessage.includes("row-level") ||
+    normalizedMessage.includes("rls")
+  ) {
+    return {
+      status: "permission_error",
+      message,
+    };
+  }
+
+  return {
+    status: "unknown_error",
+    message,
+  };
+}
+
+function getErrorCode(error: unknown) {
+  if (
+    error &&
+    typeof error === "object" &&
+    "code" in error &&
+    typeof error.code === "string"
+  ) {
+    return error.code;
+  }
+
+  return null;
+}
+
+function withTableCheckTimeout(
+  probe: PromiseLike<{ error: unknown | null }>,
+  tableName: SupabaseBattleTableName,
+) {
+  return Promise.race([
+    Promise.resolve(probe),
+    new Promise<{ error: Error }>((resolve) => {
+      window.setTimeout(() => {
+        resolve({
+          error: new Error(
+            `${tableName} check timed out before Supabase responded.`,
+          ),
+        });
+      }, 8000);
+    }),
+  ]);
 }
 
 function getErrorMessage(error: unknown) {

@@ -58,8 +58,12 @@ const accentClass = {
 };
 
 export function GeneratedHostDemoPage({
+  eyebrow = "Host demo",
+  showResetDemoData = true,
   setup,
 }: {
+  eyebrow?: string;
+  showResetDemoData?: boolean;
   setup: LocalBattleSetup;
 }) {
   const [roundIndex, setRoundIndex] = useState(0);
@@ -112,7 +116,7 @@ export function GeneratedHostDemoPage({
       <div className="mx-auto w-full max-w-7xl px-5 py-6 sm:px-8 lg:px-10">
         <DemoHeader
           activeHref="/host/demo"
-          eyebrow="Host demo"
+          eyebrow={eyebrow}
           themeLabel={activeTheme}
           title={setup.eventName}
         />
@@ -171,15 +175,20 @@ export function GeneratedHostDemoPage({
                 >
                   Next Round
                 </MockButton>
-                <MockButton onClick={clearLocalBattleSetup} tone="ghost">
-                  Reset Demo Data
-                </MockButton>
+                {showResetDemoData ? (
+                  <MockButton onClick={clearLocalBattleSetup} tone="ghost">
+                    Reset Demo Data
+                  </MockButton>
+                ) : null}
               </div>
             </Panel>
           </div>
 
           <aside className="space-y-5">
-            <GeneratedSetupSummary setup={setup} />
+            <GeneratedSetupSummary
+              label={showResetDemoData ? "Local setup" : "Supabase setup"}
+              setup={setup}
+            />
             <Scoreboard
               scoreboard={scoreboard}
               title="Host tally"
@@ -200,8 +209,10 @@ export function GeneratedHostDemoPage({
 }
 
 export function GeneratedEventDemoPage({
+  eyebrow = "Guest demo",
   setup,
 }: {
+  eyebrow?: string;
   setup: LocalBattleSetup;
 }) {
   const [selectedSide, setSelectedSide] = useState<GeneratedVoteSide | null>(
@@ -219,7 +230,7 @@ export function GeneratedEventDemoPage({
       <div className="mx-auto w-full max-w-7xl px-5 py-6 sm:px-8 lg:px-10">
         <DemoHeader
           activeHref="/event/demo"
-          eyebrow="Guest demo"
+          eyebrow={eyebrow}
           themeLabel={getRoundTheme(setup, currentRound)}
           title={setup.eventName}
         />
@@ -271,8 +282,10 @@ export function GeneratedEventDemoPage({
 }
 
 export function GeneratedResultsDemoPage({
+  eyebrow = "Results demo",
   setup,
 }: {
+  eyebrow?: string;
   setup: LocalBattleSetup;
 }) {
   const scoreboard = buildGeneratedScoreboard(
@@ -292,7 +305,7 @@ export function GeneratedResultsDemoPage({
       <div className="mx-auto w-full max-w-7xl px-5 py-6 sm:px-8 lg:px-10">
         <DemoHeader
           activeHref="/results/demo"
-          eyebrow="Results demo"
+          eyebrow={eyebrow}
           themeLabel="Generated Finale"
           title={setup.eventName}
         />
@@ -608,11 +621,17 @@ function GeneratedPastResultsPreview({ setup }: { setup: LocalBattleSetup }) {
   );
 }
 
-function GeneratedSetupSummary({ setup }: { setup: LocalBattleSetup }) {
+function GeneratedSetupSummary({
+  label = "Local setup",
+  setup,
+}: {
+  label?: string;
+  setup: LocalBattleSetup;
+}) {
   return (
     <Panel className="p-4">
       <p className="text-sm font-semibold uppercase text-zinc-500">
-        Local setup
+        {label}
       </p>
       <h2 className="mt-1 text-xl font-bold text-white">{setup.eventName}</h2>
       <div className="mt-4 grid gap-2 text-sm text-zinc-400">
