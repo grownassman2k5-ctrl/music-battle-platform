@@ -71,6 +71,18 @@ export type PersistedBattle = {
   rounds: Round[];
 };
 
+export type RoundVoteTotals = {
+  roundId: UUID;
+  sideOne: number;
+  sideTwo: number;
+  total: number;
+};
+
+type LoadChatMessagesOptions = {
+  includeModerated?: boolean;
+  limit?: number;
+};
+
 type UpdateEventStateInput = {
   eventId: UUID;
   status?: EventStatus;
@@ -91,6 +103,20 @@ type UpdateRoundStateInput = {
   votingOpenedAt?: ISODateTimeString | null;
   votingClosedAt?: ISODateTimeString | null;
   revealedAt?: ISODateTimeString | null;
+};
+
+type UpdateChatMessageStatusInput = {
+  eventId: UUID;
+  messageId: UUID;
+  status: ChatMessageStatus;
+  moderationReason?: string | null;
+};
+
+type ModerateChatMessageInput = UpdateChatMessageStatusInput & {
+  moderatorParticipantId?: UUID | null;
+  targetParticipantId?: UUID | null;
+  actionType: ModerationActionType;
+  metadata?: Record<string, JsonValue>;
 };
 
 type EventRow = {
@@ -571,6 +597,82 @@ export async function joinEventAsParticipant(
   }
 }
 
+export async function getParticipantById(
+  eventId: UUID,
+  participantId: UUID,
+): Promise<RepositoryResult<Participant | null>> {
+  try {
+    const { data, error } = await getSupabaseBrowserClient()
+      .from("participants")
+      .select("*")
+      .eq("event_id", eventId)
+      .eq("id", participantId)
+      .maybeSingle();
+
+    if (error) {
+      return failure("Load participant failed", error);
+    }
+
+    return success(data ? mapParticipant(data as ParticipantRow) : null);
+  } catch (error) {
+    return failure("Load participant failed", error);
+  }
+}
+
+export async function getParticipantVote(
+  roundId: UUID,
+  participantId: UUID,
+): Promise<RepositoryResult<Vote | null>> {
+  try {
+    const { data, error } = await getSupabaseBrowserClient()
+      .from("votes")
+      .select("*")
+      .eq("round_id", roundId)
+      .eq("participant_id", participantId)
+      .maybeSingle();
+
+    if (error) {
+      return failure("Load participant vote failed", error);
+    }
+
+    return success(data ? mapVote(data as VoteRow) : null);
+  } catch (error) {
+    return failure("Load participant vote failed", error);
+  }
+}
+
+export async function getRoundVoteTotals(
+  round: Pick<
+    Round,
+    "eventId" | "id" | "sideOneId" | "sideTwoId" | "sideOneVoteCount" | "sideTwoVoteCount"
+  >,
+): Promise<RepositoryResult<RoundVoteTotals>> {
+  try {
+    const { data, error } = await getSupabaseBrowserClient()
+      .from("votes")
+      .select("side_id")
+      .eq("event_id", round.eventId)
+      .eq("round_id", round.id);
+
+    if (error) {
+      return failure("Load vote totals failed", error);
+    }
+
+    const sideIds = (data as Array<{ side_id: UUID }>).map((vote) => vote.side_id);
+    const sideOne = sideIds.filter((sideId) => sideId === round.sideOneId).length;
+    const sideTwo = sideIds.filter((sideId) => sideId === round.sideTwoId).length;
+
+    return success({
+      roundId: round.id,
+      sideOne,
+      sideTwo,
+      total: sideOne + sideTwo,
+    });
+  } catch (error) {
+    return failure("Load vote totals failed", error);
+  }
+}
+
 export async function submitOrUpdateVote(
   input: SubmitVoteInput,
 ): Promise<RepositoryResult<Vote>> {
@@ -625,6 +727,93 @@ export async function addChatMessage(
   } catch (error) {
     return failure("Add chat message failed", error);
   }
+}
+
+export async function loadChatMessages(
+  eventId: UUID,
+  options: LoadChatMessagesOptions = {},
+): Promise<RepositoryResult<ChatMessage[]>> {
+  try {
+    const limit = options.limit ?? 100;
+    let query = getSupabaseBrowserClient()
+      .from("chat_messages")
+      .select("*")
+      .eq("event_id", eventId)
+      .order("created_at", { ascending: true })
+      .limit(limit);
+
+    if (!options.includeModerated) {
+      query = query.eq("status", "visible");
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      return failure("Load chat messages failed", error);
+    }
+
+    return success((data as ChatMessageRow[]).map(mapChatMessage));
+  } catch (error) {
+    return failure("Load chat messages failed", error);
+  }
+}
+
+export async function updateChatMessageStatus(
+  input: UpdateChatMessageStatusInput,
+): Promise<RepositoryResult<ChatMessage>> {
+  try {
+    const { data, error } = await getSupabaseBrowserClient()
+      .from("chat_messages")
+      .update({
+        moderation_reason: input.moderationReason ?? null,
+        status: input.status,
+      })
+      .eq("event_id", input.eventId)
+      .eq("id", input.messageId)
+      .select("*")
+      .single();
+
+    if (error) {
+      return failure("Update chat message failed", error);
+    }
+
+    return success(mapChatMessage(data as ChatMessageRow));
+  } catch (error) {
+    return failure("Update chat message failed", error);
+  }
+}
+
+export async function moderateChatMessage(
+  input: ModerateChatMessageInput,
+): Promise<RepositoryResult<ChatMessage>> {
+  const messageResult = await updateChatMessageStatus(input);
+
+  if (messageResult.error || !messageResult.data) {
+    return messageResult;
+  }
+
+  const actionResult = await recordModerationAction({
+    actionType: input.actionType,
+    chatMessageId: input.messageId,
+    eventId: input.eventId,
+    metadata: {
+      status: input.status,
+      ...input.metadata,
+    },
+    moderatorParticipantId: input.moderatorParticipantId ?? null,
+    reason: input.moderationReason ?? null,
+    targetParticipantId:
+      input.targetParticipantId ?? messageResult.data.participantId,
+  });
+
+  if (actionResult.error) {
+    return failure(
+      "Moderation action partially saved",
+      `${actionResult.error}. The chat message status was updated, but the moderation audit row was not recorded.`,
+    );
+  }
+
+  return messageResult;
 }
 
 export async function recordModerationAction(input: {

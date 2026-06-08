@@ -9,25 +9,39 @@ import {
   type LocalBattleSetup,
 } from "@/lib/local-demo-store";
 import type { Accent, ScoreboardEntry } from "@/lib/mock-battle";
-import { mockBattleEvent } from "@/lib/mock-battle";
 import {
+  clearPersistedEventAccess,
+  readPersistedEventAccess,
+  savePersistedEventAccess,
+  verifyEventPasscode,
+  type PersistedAccessRole,
+} from "@/lib/persisted-event-access";
+import { getSupabaseBrowserClient } from "@/lib/supabase/browser-client";
+import {
+  getParticipantById,
+  getParticipantVote,
+  getRoundVoteTotals,
+  joinEventAsParticipant,
   loadPersistedBattleBySlug,
+  submitOrUpdateVote,
   updateEventState,
   updateRoundState,
   type PersistedBattle,
+  type RoundVoteTotals,
 } from "@/lib/supabase/battle-repository";
 import type {
   BattleEvent,
   EventSide,
   EventStatus,
+  Participant,
   Round,
   RoundStatus,
   Song,
+  Vote,
 } from "@/lib/types/battle";
 import { AmbientMusicBackground } from "./ambient-music-background";
-import { ChatPanel } from "./chat-panel";
 import { HostRoleControls } from "./host-role-controls";
-import { ModerationPanel } from "./moderation-panel";
+import { PersistedChatPanel } from "./persisted-chat-panel";
 import { Scoreboard } from "./scoreboard";
 import { ThemeSelector } from "./theme-selector";
 import { TimerDisplay } from "./timer-display";
@@ -35,6 +49,8 @@ import { MockButton, Panel, Pill, PreviewLink } from "./ui";
 
 type PersistedRouteMode = "host" | "event" | "results";
 type PersistedVoteSide = "sideOne" | "sideTwo";
+type LiveSyncStatus = "connecting" | "connected" | "unavailable";
+type LocalAccessStatus = "checking" | "locked" | "verified";
 
 type PersistedBattleState =
   | {
@@ -82,6 +98,96 @@ type PersistedRoundView = {
 };
 
 type PersistedVoteTotals = Record<PersistedVoteSide, number>;
+
+type GuestParticipantState =
+  | {
+      status: "checking";
+      message: string;
+    }
+  | {
+      status: "needs_join";
+      message: string;
+    }
+  | {
+      status: "joining";
+      message: string;
+    }
+  | {
+      status: "joined";
+      participant: Participant;
+      message: string;
+    }
+  | {
+      status: "error";
+      message: string;
+    };
+
+type GuestVoteState =
+  | {
+      status: "idle";
+      message: string;
+    }
+  | {
+      status: "loading";
+      message: string;
+    }
+  | {
+      status: "saving";
+      message: string;
+    }
+  | {
+      status: "saved";
+      message: string;
+    }
+  | {
+      status: "error";
+      message: string;
+    };
+
+type VoteTotalsState =
+  | {
+      status: "idle";
+      message: string;
+      totals: RoundVoteTotals | null;
+    }
+  | {
+      status: "loading";
+      message: string;
+      totals: RoundVoteTotals | null;
+    }
+  | {
+      status: "ready";
+      message: string;
+      totals: RoundVoteTotals;
+    }
+  | {
+      status: "error";
+      message: string;
+      totals: RoundVoteTotals | null;
+    };
+
+type LocalAccessState = {
+  status: LocalAccessStatus;
+  message: string;
+};
+
+type AccessAttemptState =
+  | {
+      status: "idle";
+      message: string;
+    }
+  | {
+      status: "checking";
+      message: string;
+    }
+  | {
+      status: "verified";
+      message: string;
+    }
+  | {
+      status: "error";
+      message: string;
+    };
 
 const accentBySide: Record<PersistedVoteSide, Accent> = {
   sideOne: "gold",
@@ -134,7 +240,7 @@ export function PersistedEventBattlePage({
 }: {
   eventSlug: string;
 }) {
-  const { state } = usePersistedBattleState(eventSlug);
+  const { reloadBattle, state } = usePersistedBattleState(eventSlug);
 
   if (state.status !== "ready") {
     return (
@@ -146,6 +252,7 @@ export function PersistedEventBattlePage({
     <PersistedGuestExperience
       battle={state.battle}
       eventSlug={eventSlug}
+      onReload={reloadBattle}
       setup={state.setup}
     />
   );
@@ -156,7 +263,7 @@ export function PersistedResultsBattlePage({
 }: {
   eventSlug: string;
 }) {
-  const { state } = usePersistedBattleState(eventSlug);
+  const { reloadBattle, state } = usePersistedBattleState(eventSlug);
 
   if (state.status !== "ready") {
     return (
@@ -168,6 +275,7 @@ export function PersistedResultsBattlePage({
     <PersistedResultsExperience
       battle={state.battle}
       eventSlug={eventSlug}
+      onReload={reloadBattle}
       setup={state.setup}
     />
   );
@@ -236,6 +344,330 @@ async function readPersistedBattleState(
   };
 }
 
+function usePersistedRealtime({
+  battle,
+  currentRoundId,
+  onBattleChange,
+  onVotesChange,
+}: {
+  battle: PersistedBattle;
+  currentRoundId?: string | null;
+  onBattleChange: () => Promise<PersistedBattleState>;
+  onVotesChange?: () => Promise<void>;
+}) {
+  const [syncStatus, setSyncStatus] =
+    useState<LiveSyncStatus>("connecting");
+
+  useEffect(() => {
+    let isActive = true;
+    let battleReloadTimer: number | null = null;
+    let voteReloadTimer: number | null = null;
+    const supabase = getSupabaseBrowserClient();
+    const scheduleBattleReload = () => {
+      if (battleReloadTimer) {
+        window.clearTimeout(battleReloadTimer);
+      }
+
+      battleReloadTimer = window.setTimeout(() => {
+        if (isActive) {
+          void onBattleChange();
+        }
+      }, 150);
+    };
+    const scheduleVoteReload = () => {
+      if (!onVotesChange) {
+        return;
+      }
+
+      if (voteReloadTimer) {
+        window.clearTimeout(voteReloadTimer);
+      }
+
+      voteReloadTimer = window.setTimeout(() => {
+        if (isActive) {
+          void onVotesChange();
+        }
+      }, 150);
+    };
+    let channel = supabase
+      .channel(
+        `persisted-battle:${battle.event.id}:${currentRoundId ?? "no-round"}`,
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          filter: `id=eq.${battle.event.id}`,
+          schema: "public",
+          table: "events",
+        },
+        scheduleBattleReload,
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          filter: `event_id=eq.${battle.event.id}`,
+          schema: "public",
+          table: "rounds",
+        },
+        scheduleBattleReload,
+      );
+
+    if (currentRoundId) {
+      channel = channel.on(
+        "postgres_changes",
+        {
+          event: "*",
+          filter: `round_id=eq.${currentRoundId}`,
+          schema: "public",
+          table: "votes",
+        },
+        () => {
+          scheduleVoteReload();
+          scheduleBattleReload();
+        },
+      );
+    }
+
+    channel.subscribe((status) => {
+      if (!isActive) {
+        return;
+      }
+
+      if (status === "SUBSCRIBED") {
+        setSyncStatus("connected");
+        return;
+      }
+
+      if (
+        status === "CHANNEL_ERROR" ||
+        status === "TIMED_OUT" ||
+        status === "CLOSED"
+      ) {
+        setSyncStatus("unavailable");
+      }
+    });
+
+    return () => {
+      isActive = false;
+
+      if (battleReloadTimer) {
+        window.clearTimeout(battleReloadTimer);
+      }
+
+      if (voteReloadTimer) {
+        window.clearTimeout(voteReloadTimer);
+      }
+
+      void supabase.removeChannel(channel);
+    };
+  }, [
+    battle.event.id,
+    currentRoundId,
+    onBattleChange,
+    onVotesChange,
+  ]);
+
+  return syncStatus;
+}
+
+function useLocalEventAccess(eventId: string, role: PersistedAccessRole) {
+  const [accessState, setAccessState] = useState<LocalAccessState>({
+    status: "checking",
+    message: "Checking saved access...",
+  });
+
+  useEffect(() => {
+    let isActive = true;
+
+    Promise.resolve().then(() => {
+      const storedAccess = readPersistedEventAccess(eventId, role);
+
+      if (!isActive) {
+        return;
+      }
+
+      if (!storedAccess) {
+        setAccessState({
+          status: "locked",
+          message:
+            role === "host"
+              ? "Enter the event passcode to unlock host controls."
+              : "Enter the event passcode and display name to join.",
+        });
+        return;
+      }
+
+      setAccessState({
+        status: "verified",
+        message:
+          role === "host"
+            ? "Host access is verified on this browser."
+            : "Event access is verified on this browser.",
+      });
+    });
+
+    return () => {
+      isActive = false;
+    };
+  }, [eventId, role]);
+
+  function markVerified({
+    displayName,
+    participantId,
+  }: {
+    displayName?: string;
+    participantId?: string;
+  } = {}) {
+    savePersistedEventAccess({
+      displayName,
+      eventId,
+      participantId,
+      role,
+    });
+    setAccessState({
+      status: "verified",
+      message:
+        role === "host"
+          ? "Host access verified for this browser."
+          : "Event access verified for this browser.",
+    });
+  }
+
+  function clearAccess() {
+    clearPersistedEventAccess(eventId, role);
+    setAccessState({
+      status: "locked",
+      message:
+        role === "host"
+          ? "Host access cleared. Enter the passcode again."
+          : "Event access cleared. Enter the passcode again.",
+    });
+  }
+
+  return {
+    accessState,
+    clearAccess,
+    markVerified,
+  };
+}
+
+function useGuestParticipant(eventId: string) {
+  const [participantState, setParticipantState] =
+    useState<GuestParticipantState>({
+      status: "checking",
+      message: "Checking your guest session...",
+    });
+
+  useEffect(() => {
+    let isActive = true;
+
+    Promise.resolve().then(async () => {
+      const storedParticipantId = readStoredParticipantId(eventId);
+
+      if (!storedParticipantId) {
+        if (isActive) {
+          setParticipantState({
+            status: "needs_join",
+            message: "Join this event to vote in the current round.",
+          });
+        }
+        return;
+      }
+
+      const result = await getParticipantById(eventId, storedParticipantId);
+
+      if (!isActive) {
+        return;
+      }
+
+      if (result.error) {
+        setParticipantState({
+          status: "error",
+          message: getFriendlyActionError(result.error),
+        });
+        return;
+      }
+
+      if (!result.data) {
+        clearStoredParticipantId(eventId);
+        setParticipantState({
+          status: "needs_join",
+          message:
+            "Your saved guest session was not found. Join again to continue.",
+        });
+        return;
+      }
+
+      setParticipantState({
+        status: "joined",
+        participant: result.data,
+        message: `Joined as ${result.data.displayName}.`,
+      });
+    });
+
+    return () => {
+      isActive = false;
+    };
+  }, [eventId]);
+
+  async function join(displayName: string) {
+    const trimmedDisplayName = displayName.trim();
+
+    if (!trimmedDisplayName) {
+      setParticipantState({
+        status: "needs_join",
+        message: "Enter a display name to join.",
+      });
+      return null;
+    }
+
+    setParticipantState({
+      status: "joining",
+      message: "Joining event...",
+    });
+
+    const result = await joinEventAsParticipant(eventId, {
+      displayName: trimmedDisplayName,
+      role: "guest",
+    });
+
+    if (result.error || !result.data) {
+      setParticipantState({
+        status: "error",
+        message: getFriendlyActionError(
+          result.error ?? "Supabase did not return a participant.",
+        ),
+      });
+      return null;
+    }
+
+    saveStoredParticipantId(eventId, result.data.id);
+    setParticipantState({
+      status: "joined",
+      participant: result.data,
+      message: `Joined as ${result.data.displayName}.`,
+    });
+
+    return result.data;
+  }
+
+  function leave() {
+    clearStoredParticipantId(eventId);
+    setParticipantState({
+      status: "needs_join",
+      message: "Guest session cleared. Join again to vote.",
+    });
+  }
+
+  return {
+    join,
+    leave,
+    participantState,
+  };
+}
+
 function PersistedHostExperience({
   battle,
   eventSlug,
@@ -247,6 +679,16 @@ function PersistedHostExperience({
   onReload: () => Promise<PersistedBattleState>;
   setup: LocalBattleSetup;
 }) {
+  const {
+    accessState: hostAccessState,
+    clearAccess: clearHostAccess,
+    markVerified: markHostVerified,
+  } = useLocalEventAccess(battle.event.id, "host");
+  const [hostAccessAttempt, setHostAccessAttempt] =
+    useState<AccessAttemptState>({
+      status: "idle",
+      message: "",
+    });
   const roundViews = useMemo(() => buildRoundViews(battle), [battle]);
   const currentRound = getCurrentRoundView(battle, roundViews);
   const currentTheme = currentRound
@@ -257,12 +699,143 @@ function PersistedHostExperience({
     status: "idle",
     message: "",
   });
+  const [voteTotalsState, setVoteTotalsState] = useState<VoteTotalsState>({
+    status: "idle",
+    message: "Vote totals have not been loaded yet.",
+    totals: null,
+  });
+  const [manualWinnerChoice, setManualWinnerChoice] = useState<{
+    roundId: string;
+    side: PersistedVoteSide;
+  } | null>(null);
   const scoreboard = useMemo(
     () => buildPersistedScoreboard(battle, roundViews),
     [battle, roundViews],
   );
   const isSaving = actionState.status === "saving";
   const activeTheme = selectedTheme ?? currentTheme;
+  const currentRoundId = currentRound?.round.id ?? null;
+  const currentRoundVoteTotals =
+    voteTotalsState.totals?.roundId === currentRoundId
+      ? voteTotalsState.totals
+      : null;
+  const activeVoteTotals =
+    currentRoundVoteTotals ??
+    (currentRound ? getPersistedVoteTotals(currentRound.round) : null);
+  const selectedManualWinner =
+    manualWinnerChoice?.roundId === currentRoundId
+      ? manualWinnerChoice.side
+      : null;
+
+  const refreshVoteTotalsQuietly = useCallback(async () => {
+    if (!currentRound) {
+      return;
+    }
+
+    const result = await getRoundVoteTotals(currentRound.round);
+
+    if (result.error || !result.data) {
+      setVoteTotalsState({
+        status: "error",
+        message: getFriendlyActionError(
+          result.error ?? "Supabase did not return vote totals.",
+        ),
+        totals: null,
+      });
+      return;
+    }
+
+    setVoteTotalsState({
+      status: "ready",
+      message: "Vote totals loaded from Supabase.",
+      totals: result.data,
+    });
+  }, [currentRound, setVoteTotalsState]);
+
+  const syncStatus = usePersistedRealtime({
+    battle,
+    currentRoundId,
+    onBattleChange: onReload,
+    onVotesChange: refreshVoteTotalsQuietly,
+  });
+
+  useEffect(() => {
+    let isActive = true;
+
+    if (!currentRound) {
+      return;
+    }
+
+    getRoundVoteTotals(currentRound.round).then((result) => {
+      if (!isActive) {
+        return;
+      }
+
+      if (result.error || !result.data) {
+        setVoteTotalsState({
+          status: "error",
+          message: getFriendlyActionError(
+            result.error ?? "Supabase did not return vote totals.",
+          ),
+          totals: null,
+        });
+        return;
+      }
+
+      setVoteTotalsState({
+        status: "ready",
+        message: "Vote totals loaded from Supabase.",
+        totals: result.data,
+      });
+    });
+
+    return () => {
+      isActive = false;
+    };
+  }, [currentRound]);
+
+  async function refreshVoteTotals() {
+    if (!currentRound) {
+      return;
+    }
+
+    setVoteTotalsState((currentState) => ({
+      status: "loading",
+      message: "Refreshing vote totals...",
+      totals: currentState.totals,
+    }));
+
+    await refreshVoteTotalsQuietly();
+  }
+
+  async function readVoteTotalsForAction() {
+    if (!currentRound) {
+      return {
+        error: "No current round is available.",
+        totals: null,
+      };
+    }
+
+    const result = await getRoundVoteTotals(currentRound.round);
+
+    if (result.error || !result.data) {
+      return {
+        error: result.error ?? "Supabase did not return vote totals.",
+        totals: null,
+      };
+    }
+
+    setVoteTotalsState({
+      status: "ready",
+      message: "Vote totals loaded from Supabase.",
+      totals: result.data,
+    });
+
+    return {
+      error: null,
+      totals: result.data,
+    };
+  }
 
   async function runHostAction(
     label: string,
@@ -346,10 +919,18 @@ function PersistedHostExperience({
       return "No current round is available to close voting.";
     }
 
+    const voteTotalsResult = await readVoteTotalsForAction();
+
+    if (voteTotalsResult.error || !voteTotalsResult.totals) {
+      return voteTotalsResult.error;
+    }
+
     const roundResult = await updateRoundState({
       eventId: battle.event.id,
       roundId: currentRound.round.id,
       status: "voting_closed",
+      sideOneVoteCount: voteTotalsResult.totals.sideOne,
+      sideTwoVoteCount: voteTotalsResult.totals.sideTwo,
       votingClosedAt: new Date().toISOString(),
     });
 
@@ -361,16 +942,30 @@ function PersistedHostExperience({
       return "No current round is available to reveal.";
     }
 
-    const winner = getMockWinnerChoice(currentRound);
-    const voteTotals = getMockVoteTotals(currentRound.roundIndex);
+    const voteTotalsResult = await readVoteTotalsForAction();
+
+    if (voteTotalsResult.error || !voteTotalsResult.totals) {
+      return voteTotalsResult.error;
+    }
+
+    const winner = getWinnerFromVoteTotals(
+      currentRound,
+      voteTotalsResult.totals,
+      selectedManualWinner,
+    );
+
+    if (!winner) {
+      return "Vote totals are tied. Choose a winner before revealing.";
+    }
+
     const roundResult = await updateRoundState({
       eventId: battle.event.id,
       roundId: currentRound.round.id,
       status: "revealed",
       winnerSideId: winner.side.id,
       winnerSongId: winner.song.id,
-      sideOneVoteCount: voteTotals.sideOne,
-      sideTwoVoteCount: voteTotals.sideTwo,
+      sideOneVoteCount: voteTotalsResult.totals.sideOne,
+      sideTwoVoteCount: voteTotalsResult.totals.sideTwo,
       revealedAt: new Date().toISOString(),
     });
 
@@ -415,6 +1010,54 @@ function PersistedHostExperience({
     return roundResult.error;
   }
 
+  async function verifyHostAccess(passcode: string) {
+    setHostAccessAttempt({
+      status: "checking",
+      message: "Checking host passcode...",
+    });
+
+    try {
+      const result = await verifyEventPasscode(
+        passcode,
+        battle.event.passcodeHash,
+      );
+
+      if (!result.verified) {
+        setHostAccessAttempt({
+          status: "error",
+          message: result.error,
+        });
+        return;
+      }
+
+      markHostVerified();
+      setHostAccessAttempt({
+        status: "verified",
+        message: "Host access verified.",
+      });
+    } catch (error) {
+      setHostAccessAttempt({
+        status: "error",
+        message: getFriendlyActionError(
+          error instanceof Error ? error.message : "Host access failed.",
+        ),
+      });
+    }
+  }
+
+  if (hostAccessState.status !== "verified") {
+    return (
+      <HostAccessGate
+        accessState={hostAccessState}
+        attemptState={hostAccessAttempt}
+        battle={battle}
+        eventSlug={eventSlug}
+        onSubmit={(passcode) => void verifyHostAccess(passcode)}
+        setup={setup}
+      />
+    );
+  }
+
   return (
     <main className="relative min-h-screen overflow-hidden text-white">
       <AmbientMusicBackground />
@@ -423,6 +1066,7 @@ function PersistedHostExperience({
           event={battle.event}
           eventSlug={eventSlug}
           mode="host"
+          syncStatus={syncStatus}
           themeLabel={activeTheme}
         />
 
@@ -444,7 +1088,22 @@ function PersistedHostExperience({
                 <PersistedMatchupBoard
                   roundView={currentRound}
                   setup={setup}
+                  voteTotalsOverride={activeVoteTotals}
                   voteLabel="Preview"
+                />
+
+                <HostVoteTotalsPanel
+                  currentRound={currentRound}
+                  manualWinnerSide={selectedManualWinner}
+                  onManualWinnerChange={(side) =>
+                    setManualWinnerChoice({
+                      roundId: currentRound.round.id,
+                      side,
+                    })
+                  }
+                  onRefresh={() => void refreshVoteTotals()}
+                  state={voteTotalsState}
+                  totals={activeVoteTotals}
                 />
 
                 <Panel className="p-4">
@@ -534,7 +1193,11 @@ function PersistedHostExperience({
               themes={setup.visualThemes}
             />
             <HostRoleControls />
-            <ModerationPanel messages={mockBattleEvent.chatMessages} />
+            <HostAccessStatusPanel
+              accessState={hostAccessState}
+              onClearAccess={clearHostAccess}
+            />
+            <PersistedChatPanel eventId={battle.event.id} mode="host" />
           </aside>
         </section>
       </div>
@@ -545,28 +1208,245 @@ function PersistedHostExperience({
 function PersistedGuestExperience({
   battle,
   eventSlug,
+  onReload,
   setup,
 }: {
   battle: PersistedBattle;
   eventSlug: string;
+  onReload: () => Promise<PersistedBattleState>;
   setup: LocalBattleSetup;
 }) {
-  const [selectedSide, setSelectedSide] = useState<PersistedVoteSide | null>(
-    null,
-  );
+  const {
+    accessState: guestAccessState,
+    clearAccess: clearGuestAccess,
+    markVerified: markGuestVerified,
+  } = useLocalEventAccess(battle.event.id, "guest");
+  const [guestAccessAttempt, setGuestAccessAttempt] =
+    useState<AccessAttemptState>({
+      status: "idle",
+      message: "",
+    });
+  const { join, leave, participantState } = useGuestParticipant(battle.event.id);
+  const [selectedVote, setSelectedVote] = useState<{
+    roundId: string;
+    side: PersistedVoteSide;
+  } | null>(null);
+  const [voteState, setVoteState] = useState<GuestVoteState>({
+    status: "idle",
+    message: "Join the event to vote.",
+  });
   const roundViews = useMemo(() => buildRoundViews(battle), [battle]);
   const currentRound = getCurrentRoundView(battle, roundViews);
+  const currentRoundId = currentRound?.round.id ?? null;
   const scoreboard = useMemo(
     () => buildPersistedScoreboard(battle, roundViews),
     [battle, roundViews],
   );
   const votingIsOpen = currentRound?.round.status === "voting_open";
+  const selectedSide =
+    selectedVote?.roundId === currentRoundId ? selectedVote.side : null;
+  const syncStatus = usePersistedRealtime({
+    battle,
+    currentRoundId,
+    onBattleChange: onReload,
+  });
   const selectedArtist =
     currentRound && selectedSide
       ? currentRound[selectedSide].side.artistDisplayName
       : votingIsOpen
-        ? "No vote selected"
-        : getGuestStatusHeadline(currentRound?.round.status);
+      ? "No vote selected"
+      : getGuestStatusHeadline(currentRound?.round.status);
+  const participant =
+    participantState.status === "joined" ? participantState.participant : null;
+
+  useEffect(() => {
+    let isActive = true;
+
+    if (!participant || !currentRound) {
+      return;
+    }
+
+    getParticipantVote(currentRound.round.id, participant.id).then((result) => {
+      if (!isActive) {
+        return;
+      }
+
+      if (result.error) {
+        setVoteState({
+          status: "error",
+          message: getFriendlyActionError(result.error),
+        });
+        return;
+      }
+
+      const vote = result.data;
+      const voteSide = vote ? getVoteSide(currentRound, vote) : null;
+      setSelectedVote(
+        voteSide
+          ? {
+              roundId: currentRound.round.id,
+              side: voteSide,
+            }
+          : null,
+      );
+      setVoteState({
+        status: "idle",
+        message: voteSide
+          ? `Your saved vote is ${currentRound[voteSide].side.artistDisplayName}.`
+          : getGuestVotingMessage(currentRound.round.status),
+      });
+    });
+
+    return () => {
+      isActive = false;
+    };
+  }, [currentRound, participant]);
+
+  async function submitGuestVote(voteSide: PersistedVoteSide) {
+    if (!participant) {
+      setVoteState({
+        status: "error",
+        message: "Join this event before voting.",
+      });
+      return;
+    }
+
+    if (!currentRound) {
+      setVoteState({
+        status: "error",
+        message: "No current round is available for voting.",
+      });
+      return;
+    }
+
+    if (currentRound.round.status !== "voting_open") {
+      setVoteState({
+        status: "error",
+        message: getGuestVotingMessage(currentRound.round.status),
+      });
+      return;
+    }
+
+    const voteTarget = currentRound[voteSide];
+    setVoteState({
+      status: "saving",
+      message: `Saving vote for ${voteTarget.side.artistDisplayName}...`,
+    });
+
+    const result = await submitOrUpdateVote({
+      eventId: battle.event.id,
+      participantId: participant.id,
+      roundId: currentRound.round.id,
+      sideId: voteTarget.side.id,
+      songId: voteTarget.song.id,
+    });
+
+    if (result.error || !result.data) {
+      setVoteState({
+        status: "error",
+        message: getFriendlyVoteError(result.error ?? "Vote was not saved."),
+      });
+      return;
+    }
+
+    setSelectedVote({
+      roundId: currentRound.round.id,
+      side: voteSide,
+    });
+    setVoteState({
+      status: "saved",
+      message: `Vote saved for ${voteTarget.side.artistDisplayName}. You can change it until voting closes.`,
+    });
+  }
+
+  async function verifyGuestAccess({
+    displayName,
+    passcode,
+  }: {
+    displayName: string;
+    passcode: string;
+  }) {
+    const trimmedDisplayName = displayName.trim();
+
+    if (!trimmedDisplayName && !participant) {
+      setGuestAccessAttempt({
+        status: "error",
+        message: "Enter a display name to join this event.",
+      });
+      return;
+    }
+
+    setGuestAccessAttempt({
+      status: "checking",
+      message: "Checking event passcode...",
+    });
+
+    try {
+      const result = await verifyEventPasscode(
+        passcode,
+        battle.event.passcodeHash,
+      );
+
+      if (!result.verified) {
+        setGuestAccessAttempt({
+          status: "error",
+          message: result.error,
+        });
+        return;
+      }
+
+      const joinedParticipant =
+        participant ?? (await join(trimmedDisplayName));
+
+      if (!joinedParticipant) {
+        setGuestAccessAttempt({
+          status: "error",
+          message: "Passcode matched, but the guest session could not be saved.",
+        });
+        return;
+      }
+
+      markGuestVerified({
+        displayName: joinedParticipant.displayName,
+        participantId: joinedParticipant.id,
+      });
+      setGuestAccessAttempt({
+        status: "verified",
+        message: `Joined as ${joinedParticipant.displayName}.`,
+      });
+    } catch (error) {
+      setGuestAccessAttempt({
+        status: "error",
+        message: getFriendlyActionError(
+          error instanceof Error ? error.message : "Guest access failed.",
+        ),
+      });
+    }
+  }
+
+  function clearGuestSessionAndAccess() {
+    leave();
+    clearGuestAccess();
+    setGuestAccessAttempt({
+      status: "idle",
+      message: "",
+    });
+  }
+
+  if (guestAccessState.status !== "verified") {
+    return (
+      <GuestEventAccessGate
+        accessState={guestAccessState}
+        attemptState={guestAccessAttempt}
+        battle={battle}
+        eventSlug={eventSlug}
+        onSubmit={(input) => void verifyGuestAccess(input)}
+        participant={participant}
+        participantState={participantState}
+        setup={setup}
+      />
+    );
+  }
 
   return (
     <main className="relative min-h-screen overflow-hidden text-white">
@@ -576,6 +1456,7 @@ function PersistedGuestExperience({
           event={battle.event}
           eventSlug={eventSlug}
           mode="event"
+          syncStatus={syncStatus}
           themeLabel={
             currentRound
               ? getRoundTheme(setup, currentRound)
@@ -585,7 +1466,12 @@ function PersistedGuestExperience({
 
         <section className="grid gap-5 py-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
           <div className="space-y-5">
-            {currentRound ? (
+            {!participant ? (
+              <GuestJoinCard
+                onJoin={(displayName) => void join(displayName)}
+                state={participantState}
+              />
+            ) : currentRound ? (
               <>
                 <PersistedRoundOverview
                   roundView={currentRound}
@@ -603,11 +1489,15 @@ function PersistedGuestExperience({
                       <h2 className="mt-1 text-xl font-bold text-white">
                         {selectedArtist}
                       </h2>
+                      <p className="mt-2 text-sm text-zinc-400">
+                        {participantState.message}
+                      </p>
                     </div>
                     <Pill tone={getRoundStatusTone(currentRound.round.status)}>
                       {getRoundStatusLabel(currentRound.round.status)}
                     </Pill>
                   </div>
+                  <GuestVoteFeedback state={voteState} />
                 </Panel>
 
                 {currentRound.round.status === "revealed" ? (
@@ -616,7 +1506,7 @@ function PersistedGuestExperience({
 
                 <PersistedMatchupBoard
                   disabled={!votingIsOpen}
-                  onVote={votingIsOpen ? setSelectedSide : undefined}
+                  onVote={votingIsOpen ? submitGuestVote : undefined}
                   roundView={currentRound}
                   selectedSide={selectedSide}
                   setup={setup}
@@ -629,12 +1519,21 @@ function PersistedGuestExperience({
           </div>
 
           <aside className="space-y-5">
+            <GuestSessionPanel
+              onLeave={clearGuestSessionAndAccess}
+              participant={participant}
+              state={participantState}
+            />
             <Scoreboard
               scoreboard={scoreboard}
               title="Persisted tally"
               totalRounds={roundViews.length}
             />
-            <ChatPanel event={mockBattleEvent} />
+            <PersistedChatPanel
+              eventId={battle.event.id}
+              mode="guest"
+              participant={participant}
+            />
             <PersistedPastResultsPreview roundViews={roundViews} />
           </aside>
         </section>
@@ -646,13 +1545,21 @@ function PersistedGuestExperience({
 function PersistedResultsExperience({
   battle,
   eventSlug,
+  onReload,
   setup,
 }: {
   battle: PersistedBattle;
   eventSlug: string;
+  onReload: () => Promise<PersistedBattleState>;
   setup: LocalBattleSetup;
 }) {
   const roundViews = useMemo(() => buildRoundViews(battle), [battle]);
+  const currentRound = getCurrentRoundView(battle, roundViews);
+  const syncStatus = usePersistedRealtime({
+    battle,
+    currentRoundId: currentRound?.round.id ?? null,
+    onBattleChange: onReload,
+  });
   const scoreboard = useMemo(
     () => buildPersistedScoreboard(battle, roundViews),
     [battle, roundViews],
@@ -670,6 +1577,7 @@ function PersistedResultsExperience({
           event={battle.event}
           eventSlug={eventSlug}
           mode="results"
+          syncStatus={syncStatus}
           themeLabel="Persisted Finale"
         />
 
@@ -716,6 +1624,7 @@ function PersistedResultsExperience({
               title="Persisted final tally"
               totalRounds={roundViews.length}
             />
+            <ResultsPrivacyNote />
             <PersistedPlaylistLinks setup={setup} />
           </aside>
         </section>
@@ -724,15 +1633,34 @@ function PersistedResultsExperience({
   );
 }
 
+function ResultsPrivacyNote() {
+  return (
+    <Panel className="p-4">
+      <p className="text-sm font-semibold uppercase text-zinc-500">
+        Results access
+      </p>
+      <h2 className="mt-1 text-xl font-bold text-white">
+        Public for this phase
+      </h2>
+      <p className="mt-3 text-sm leading-6 text-zinc-400">
+        Results stay viewable without a passcode in this MVP. Add a future
+        public/private event setting before launch if results should be gated.
+      </p>
+    </Panel>
+  );
+}
+
 function PersistedHeader({
   event,
   eventSlug,
   mode,
+  syncStatus,
   themeLabel,
 }: {
   event: BattleEvent;
   eventSlug: string;
   mode: PersistedRouteMode;
+  syncStatus?: LiveSyncStatus;
   themeLabel: string;
 }) {
   return (
@@ -755,6 +1683,7 @@ function PersistedHeader({
 
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
           <Pill tone="gold">{themeLabel}</Pill>
+          {syncStatus ? <LiveSyncPill status={syncStatus} /> : null}
           <Pill tone={getEventStatusTone(event.status)}>
             {getEventStatusLabel(event.status)}
           </Pill>
@@ -784,6 +1713,483 @@ function PersistedHeader({
         </div>
       </div>
     </header>
+  );
+}
+
+function LiveSyncPill({ status }: { status: LiveSyncStatus }) {
+  const label = {
+    connecting: "Live sync connecting",
+    connected: "Live sync connected",
+    unavailable: "Live sync unavailable",
+  }[status];
+  const tone = {
+    connecting: "gold",
+    connected: "cyan",
+    unavailable: "rose",
+  }[status] as "gold" | "cyan" | "rose";
+
+  return <Pill tone={tone}>{label}</Pill>;
+}
+
+function HostAccessGate({
+  accessState,
+  attemptState,
+  battle,
+  eventSlug,
+  onSubmit,
+  setup,
+}: {
+  accessState: LocalAccessState;
+  attemptState: AccessAttemptState;
+  battle: PersistedBattle;
+  eventSlug: string;
+  onSubmit: (passcode: string) => void;
+  setup: LocalBattleSetup;
+}) {
+  const [passcode, setPasscode] = useState("");
+  const isChecking =
+    accessState.status === "checking" || attemptState.status === "checking";
+
+  return (
+    <main className="relative min-h-screen overflow-hidden text-white">
+      <AmbientMusicBackground density="calm" />
+      <div className="mx-auto flex min-h-screen w-full max-w-5xl flex-col px-5 py-6 sm:px-8 lg:px-10">
+        <PersistedHeader
+          event={battle.event}
+          eventSlug={eventSlug}
+          mode="host"
+          themeLabel={setup.visualThemes[0] ?? "Private Host Room"}
+        />
+
+        <section className="grid flex-1 items-center gap-5 py-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
+          <div>
+            <p className="text-sm font-semibold uppercase text-[#43d9cf]">
+              Host access
+            </p>
+            <h2 className="mt-3 max-w-3xl text-5xl font-black leading-tight text-white sm:text-6xl">
+              Unlock the control room
+            </h2>
+            <p className="mt-5 max-w-2xl text-base leading-7 text-zinc-400">
+              This temporary MVP uses the event passcode to protect host
+              controls on this browser. Real host authorization should move to
+              Supabase Auth or server-side passcode verification before launch.
+            </p>
+          </div>
+
+          <Panel className="p-5">
+            <Pill tone="gold">Temporary host check</Pill>
+            <h3 className="mt-4 text-2xl font-black text-white">
+              {battle.event.eventName}
+            </h3>
+            <p className="mt-2 text-sm leading-6 text-zinc-400">
+              {getBattleMatchupName(battle)} / {accessState.message}
+            </p>
+
+            <label className="mt-5 block">
+              <span className="text-sm font-medium text-zinc-300">
+                Host passcode
+              </span>
+              <input
+                className="mt-2 h-12 w-full rounded-md border border-white/15 bg-black/30 px-4 text-base text-white outline-none transition placeholder:text-zinc-600 focus:border-[#f7c948]/70"
+                disabled={isChecking}
+                onChange={(event) => setPasscode(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    onSubmit(passcode);
+                  }
+                }}
+                placeholder="Enter event passcode"
+                type="password"
+                value={passcode}
+              />
+            </label>
+
+            <MockButton
+              className="mt-4 w-full"
+              disabled={isChecking}
+              onClick={() => onSubmit(passcode)}
+              tone="primary"
+            >
+              {isChecking ? "Checking..." : "Unlock Host Controls"}
+            </MockButton>
+            <AccessFeedback state={attemptState} />
+          </Panel>
+        </section>
+      </div>
+    </main>
+  );
+}
+
+function GuestEventAccessGate({
+  accessState,
+  attemptState,
+  battle,
+  eventSlug,
+  onSubmit,
+  participant,
+  participantState,
+  setup,
+}: {
+  accessState: LocalAccessState;
+  attemptState: AccessAttemptState;
+  battle: PersistedBattle;
+  eventSlug: string;
+  onSubmit: (input: { displayName: string; passcode: string }) => void;
+  participant: Participant | null;
+  participantState: GuestParticipantState;
+  setup: LocalBattleSetup;
+}) {
+  const [displayName, setDisplayName] = useState(participant?.displayName ?? "");
+  const [passcode, setPasscode] = useState("");
+  const isChecking =
+    accessState.status === "checking" ||
+    attemptState.status === "checking" ||
+    participantState.status === "checking" ||
+    participantState.status === "joining";
+
+  return (
+    <main className="relative min-h-screen overflow-hidden text-white">
+      <AmbientMusicBackground />
+      <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col px-5 py-6 sm:px-8 lg:px-10">
+        <PersistedHeader
+          event={battle.event}
+          eventSlug={eventSlug}
+          mode="event"
+          themeLabel={setup.visualThemes[0] ?? "Private Event"}
+        />
+
+        <section className="grid flex-1 items-center gap-5 py-6 lg:grid-cols-[minmax(0,1fr)_24rem]">
+          <div>
+            <p className="text-sm font-semibold uppercase text-[#43d9cf]">
+              Private event
+            </p>
+            <h2 className="mt-3 max-w-3xl text-5xl font-black leading-tight text-white sm:text-6xl">
+              {battle.event.eventName}
+            </h2>
+            <p className="mt-4 text-2xl font-bold text-zinc-200">
+              {getBattleMatchupName(battle)}
+            </p>
+            <div className="mt-6 grid max-w-3xl gap-3 text-sm leading-6 text-zinc-400">
+              <p>
+                Enter the event passcode and a display name to join the voting
+                room. Your display name is used for votes and live chat.
+              </p>
+              <p>
+                Audio is shared by the host outside this app. Listen along in
+                the room or stream, then vote here when the host opens voting.
+              </p>
+              <p>
+                This browser will remember access for this event until you clear
+                it.
+              </p>
+            </div>
+          </div>
+
+          <Panel className="p-5">
+            <Pill tone="gold">Guest entry</Pill>
+            <h3 className="mt-4 text-2xl font-black text-white">
+              Join the battle room
+            </h3>
+            <p className="mt-2 text-sm leading-6 text-zinc-400">
+              {accessState.message}
+              {participant ? ` Existing session: ${participant.displayName}.` : ""}
+            </p>
+
+            <label className="mt-5 block">
+              <span className="text-sm font-medium text-zinc-300">
+                Display name
+              </span>
+              <input
+                className="mt-2 h-12 w-full rounded-md border border-white/15 bg-black/30 px-4 text-base text-white outline-none transition placeholder:text-zinc-600 focus:border-[#43d9cf]/70"
+                disabled={isChecking}
+                onChange={(event) => setDisplayName(event.target.value)}
+                placeholder="Your stage name"
+                type="text"
+                value={displayName}
+              />
+            </label>
+
+            <label className="mt-4 block">
+              <span className="text-sm font-medium text-zinc-300">
+                Event passcode
+              </span>
+              <input
+                className="mt-2 h-12 w-full rounded-md border border-white/15 bg-black/30 px-4 text-base text-white outline-none transition placeholder:text-zinc-600 focus:border-[#f7c948]/70"
+                disabled={isChecking}
+                onChange={(event) => setPasscode(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    onSubmit({ displayName, passcode });
+                  }
+                }}
+                placeholder="Enter passcode"
+                type="password"
+                value={passcode}
+              />
+            </label>
+
+            <MockButton
+              className="mt-4 w-full"
+              disabled={isChecking}
+              onClick={() => onSubmit({ displayName, passcode })}
+              tone="primary"
+            >
+              {isChecking ? "Joining..." : "Join Event"}
+            </MockButton>
+            <AccessFeedback state={attemptState} />
+          </Panel>
+        </section>
+      </div>
+    </main>
+  );
+}
+
+function AccessFeedback({ state }: { state: AccessAttemptState }) {
+  if (!state.message) {
+    return null;
+  }
+
+  const className =
+    state.status === "error"
+      ? "border-[#ff6b8a]/30 bg-[#ff6b8a]/10 text-[#ffe2e8]"
+      : state.status === "checking"
+        ? "border-[#f7c948]/30 bg-[#f7c948]/10 text-[#ffe7a3]"
+        : "border-[#43d9cf]/30 bg-[#43d9cf]/10 text-[#cbfffb]";
+
+  return (
+    <p className={`mt-4 rounded-lg border p-3 text-sm font-semibold ${className}`}>
+      {state.message}
+    </p>
+  );
+}
+
+function HostVoteTotalsPanel({
+  currentRound,
+  manualWinnerSide,
+  onManualWinnerChange,
+  onRefresh,
+  state,
+  totals,
+}: {
+  currentRound: PersistedRoundView;
+  manualWinnerSide: PersistedVoteSide | null;
+  onManualWinnerChange: (side: PersistedVoteSide) => void;
+  onRefresh: () => void;
+  state: VoteTotalsState;
+  totals: PersistedVoteTotals | RoundVoteTotals | null;
+}) {
+  const sideOneTotal = totals?.sideOne ?? 0;
+  const sideTwoTotal = totals?.sideTwo ?? 0;
+  const totalVotes = sideOneTotal + sideTwoTotal;
+  const isTie = sideOneTotal === sideTwoTotal;
+  const shouldShowTie =
+    isTie &&
+    (totalVotes > 0 ||
+      currentRound.round.status === "voting_closed" ||
+      currentRound.round.status === "revealed");
+  const canManuallyChoose = shouldShowTie;
+
+  return (
+    <Panel className="p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold uppercase text-zinc-500">
+            Live vote totals
+          </p>
+          <h2 className="mt-1 text-xl font-bold text-white">
+            {totalVotes} votes counted
+          </h2>
+        </div>
+        <MockButton
+          disabled={state.status === "loading"}
+          onClick={onRefresh}
+          tone="ghost"
+        >
+          {state.status === "loading" ? "Refreshing..." : "Refresh Vote Totals"}
+        </MockButton>
+      </div>
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <VoteTotalTile
+          label={currentRound.sideOne.side.publicDisplayName}
+          tone="gold"
+          value={sideOneTotal}
+        />
+        <VoteTotalTile
+          label={currentRound.sideTwo.side.publicDisplayName}
+          tone="cyan"
+          value={sideTwoTotal}
+        />
+      </div>
+
+      {state.message ? (
+        <p className="mt-4 text-sm leading-6 text-zinc-400">{state.message}</p>
+      ) : null}
+
+      {shouldShowTie ? (
+        <div className="mt-4 rounded-lg border border-[#f7c948]/30 bg-[#f7c948]/10 p-4">
+          <p className="text-sm font-bold uppercase text-[#ffe7a3]">
+            Tie detected
+          </p>
+          <p className="mt-2 text-sm leading-6 text-zinc-300">
+            Supabase needs one saved winner for the reveal. Choose a winner
+            before clicking Reveal Winner.
+          </p>
+          {canManuallyChoose ? (
+            <div className="mt-4 grid gap-2 sm:grid-cols-2">
+              <MockButton
+                onClick={() => onManualWinnerChange("sideOne")}
+                tone={manualWinnerSide === "sideOne" ? "primary" : "ghost"}
+              >
+                Choose {currentRound.sideOne.side.artistDisplayName}
+              </MockButton>
+              <MockButton
+                onClick={() => onManualWinnerChange("sideTwo")}
+                tone={manualWinnerSide === "sideTwo" ? "secondary" : "ghost"}
+              >
+                Choose {currentRound.sideTwo.side.artistDisplayName}
+              </MockButton>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </Panel>
+  );
+}
+
+function VoteTotalTile({
+  label,
+  tone,
+  value,
+}: {
+  label: string;
+  tone: "gold" | "cyan";
+  value: number;
+}) {
+  const className =
+    tone === "gold"
+      ? "border-[#f7c948]/30 bg-[#f7c948]/10 text-[#ffe7a3]"
+      : "border-[#43d9cf]/30 bg-[#43d9cf]/10 text-[#cbfffb]";
+
+  return (
+    <div className={`rounded-lg border p-4 ${className}`}>
+      <p className="text-sm font-semibold uppercase">{label}</p>
+      <p className="mt-2 text-4xl font-black text-white">{value}</p>
+    </div>
+  );
+}
+
+function GuestJoinCard({
+  onJoin,
+  state,
+}: {
+  onJoin: (displayName: string) => void;
+  state: GuestParticipantState;
+}) {
+  const [displayName, setDisplayName] = useState("");
+  const isJoining = state.status === "joining";
+
+  return (
+    <Panel className="p-5">
+      <p className="text-sm font-semibold uppercase text-zinc-500">
+        Guest join
+      </p>
+      <h2 className="mt-2 text-3xl font-black text-white">
+        Join this battle to vote
+      </h2>
+      <p className="mt-3 text-sm leading-6 text-zinc-400">{state.message}</p>
+      <label className="mt-5 block">
+        <span className="text-sm font-medium text-zinc-300">Display name</span>
+        <input
+          className="mt-2 h-12 w-full rounded-md border border-white/15 bg-black/30 px-4 text-base text-white outline-none transition placeholder:text-zinc-600 focus:border-[#43d9cf]/70"
+          disabled={isJoining}
+          onChange={(event) => setDisplayName(event.target.value)}
+          placeholder="Your stage name"
+          type="text"
+          value={displayName}
+        />
+      </label>
+      <MockButton
+        className="mt-4 w-full"
+        disabled={isJoining}
+        onClick={() => onJoin(displayName)}
+        tone="primary"
+      >
+        {isJoining ? "Joining..." : "Join Event"}
+      </MockButton>
+    </Panel>
+  );
+}
+
+function GuestSessionPanel({
+  onLeave,
+  participant,
+  state,
+}: {
+  onLeave: () => void;
+  participant: Participant | null;
+  state: GuestParticipantState;
+}) {
+  return (
+    <Panel className="p-4">
+      <p className="text-sm font-semibold uppercase text-zinc-500">
+        Guest session
+      </p>
+      <h2 className="mt-1 text-xl font-bold text-white">
+        {participant?.displayName ?? "Not joined"}
+      </h2>
+      <p className="mt-3 text-sm leading-6 text-zinc-400">{state.message}</p>
+      {participant ? (
+        <MockButton className="mt-4 w-full" onClick={onLeave} tone="ghost">
+          Leave Event / Clear Access
+        </MockButton>
+      ) : null}
+    </Panel>
+  );
+}
+
+function HostAccessStatusPanel({
+  accessState,
+  onClearAccess,
+}: {
+  accessState: LocalAccessState;
+  onClearAccess: () => void;
+}) {
+  return (
+    <Panel className="p-4">
+      <p className="text-sm font-semibold uppercase text-zinc-500">
+        Host access
+      </p>
+      <h2 className="mt-1 text-xl font-bold text-white">Verified locally</h2>
+      <p className="mt-3 text-sm leading-6 text-zinc-400">
+        {accessState.message} This is a temporary browser-only access flag for
+        MVP testing.
+      </p>
+      <MockButton className="mt-4 w-full" onClick={onClearAccess} tone="ghost">
+        Clear Host Access
+      </MockButton>
+    </Panel>
+  );
+}
+
+function GuestVoteFeedback({ state }: { state: GuestVoteState }) {
+  if (!state.message) {
+    return null;
+  }
+
+  const className =
+    state.status === "error"
+      ? "border-[#ff6b8a]/30 bg-[#ff6b8a]/10 text-[#ffe2e8]"
+      : state.status === "saved"
+        ? "border-[#43d9cf]/30 bg-[#43d9cf]/10 text-[#cbfffb]"
+        : state.status === "saving" || state.status === "loading"
+          ? "border-[#f7c948]/30 bg-[#f7c948]/10 text-[#ffe7a3]"
+          : "border-white/10 bg-white/10 text-zinc-300";
+
+  return (
+    <div className={`mt-4 rounded-lg border p-3 text-sm font-semibold ${className}`}>
+      {state.message}
+    </div>
   );
 }
 
@@ -881,6 +2287,7 @@ function PersistedMatchupBoard({
   roundView,
   selectedSide,
   setup,
+  voteTotalsOverride,
   voteLabel = "Vote",
 }: {
   disabled?: boolean;
@@ -888,9 +2295,10 @@ function PersistedMatchupBoard({
   roundView: PersistedRoundView;
   selectedSide?: PersistedVoteSide | null;
   setup: LocalBattleSetup;
+  voteTotalsOverride?: PersistedVoteTotals | RoundVoteTotals | null;
   voteLabel?: string;
 }) {
-  const voteTotals = getDisplayVoteTotals(roundView);
+  const voteTotals = voteTotalsOverride ?? getDisplayVoteTotals(roundView);
 
   return (
     <div className="grid items-stretch gap-5 xl:grid-cols-[1fr_auto_1fr]">
@@ -1354,6 +2762,20 @@ function buildPersistedScoreboard(
     });
 }
 
+function getBattleMatchupName(battle: PersistedBattle) {
+  const sides = [...battle.sides]
+    .sort((sideOne, sideTwo) => sideOne.displayOrder - sideTwo.displayOrder)
+    .slice(0, 2);
+
+  if (sides.length < 2) {
+    return "Private music battle";
+  }
+
+  return sides
+    .map((side) => side.artistDisplayName || side.publicDisplayName)
+    .join(" vs ");
+}
+
 function getPersistedWinner(roundView: PersistedRoundView) {
   if (
     roundView.round.winnerSideId === roundView.sideOne.side.id ||
@@ -1378,14 +2800,36 @@ function getMockWinnerChoice(roundView: PersistedRoundView) {
   return totals.sideOne >= totals.sideTwo ? roundView.sideOne : roundView.sideTwo;
 }
 
-function getDisplayVoteTotals(roundView: PersistedRoundView) {
-  const persistedTotals = getPersistedVoteTotals(roundView.round);
-
-  if (persistedTotals.sideOne > 0 || persistedTotals.sideTwo > 0) {
-    return persistedTotals;
+function getWinnerFromVoteTotals(
+  roundView: PersistedRoundView,
+  totals: Pick<RoundVoteTotals, "sideOne" | "sideTwo">,
+  manualWinnerSide: PersistedVoteSide | null,
+) {
+  if (totals.sideOne > totals.sideTwo) {
+    return roundView.sideOne;
   }
 
-  return getMockVoteTotals(roundView.roundIndex);
+  if (totals.sideTwo > totals.sideOne) {
+    return roundView.sideTwo;
+  }
+
+  return manualWinnerSide ? roundView[manualWinnerSide] : null;
+}
+
+function getVoteSide(roundView: PersistedRoundView, vote: Vote) {
+  if (vote.sideId === roundView.sideOne.side.id) {
+    return "sideOne" as const;
+  }
+
+  if (vote.sideId === roundView.sideTwo.side.id) {
+    return "sideTwo" as const;
+  }
+
+  return null;
+}
+
+function getDisplayVoteTotals(roundView: PersistedRoundView) {
+  return getPersistedVoteTotals(roundView.round);
 }
 
 function getPersistedVoteTotals(round: Round): PersistedVoteTotals {
@@ -1502,6 +2946,30 @@ function getGuestStatusHeadline(status?: RoundStatus) {
   return "Waiting for host";
 }
 
+function getGuestVotingMessage(status?: RoundStatus) {
+  if (status === "voting_open") {
+    return "Voting is open. You can change your vote until the host closes voting.";
+  }
+
+  if (status === "voting_closed") {
+    return "Voting is closed for this round.";
+  }
+
+  if (status === "revealed") {
+    return "The winner has been revealed for this round.";
+  }
+
+  if (status === "playing") {
+    return "The round has started. Wait for the host to open voting.";
+  }
+
+  if (status === "active" || status === "queued") {
+    return "The host has not opened voting yet.";
+  }
+
+  return "Voting is not available for this round.";
+}
+
 function getFriendlyActionError(error: string) {
   if (error.toLowerCase().includes("row-level")) {
     return "Supabase blocked this update with a row-level security rule.";
@@ -1512,6 +2980,46 @@ function getFriendlyActionError(error: string) {
   }
 
   return error;
+}
+
+function getFriendlyVoteError(error: string) {
+  if (error.toLowerCase().includes("votes can only")) {
+    return "Voting is not open for this round.";
+  }
+
+  if (error.toLowerCase().includes("duplicate")) {
+    return "Your previous vote could not be updated. Try again.";
+  }
+
+  return getFriendlyActionError(error);
+}
+
+function getParticipantStorageKey(eventId: string) {
+  return `music-battle-platform.participant.${eventId}.v1`;
+}
+
+function readStoredParticipantId(eventId: string) {
+  if (typeof window === "undefined") {
+    return "";
+  }
+
+  return window.localStorage.getItem(getParticipantStorageKey(eventId)) ?? "";
+}
+
+function saveStoredParticipantId(eventId: string, participantId: string) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.localStorage.setItem(getParticipantStorageKey(eventId), participantId);
+}
+
+function clearStoredParticipantId(eventId: string) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.localStorage.removeItem(getParticipantStorageKey(eventId));
 }
 
 function getPlaylistLinks(setup: LocalBattleSetup) {

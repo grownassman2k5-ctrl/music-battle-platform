@@ -15,6 +15,7 @@ import {
   saveLocalBattleSetup,
   type LocalSideDisplayConfig,
 } from "@/lib/local-demo-store";
+import { hashEventPasscode } from "@/lib/persisted-event-access";
 import {
   createEvent,
   createEventSides,
@@ -196,7 +197,7 @@ export function HostSetupPage() {
 
     try {
       const eventSlug = createEventSlug(eventName);
-      const passcodeHash = await hashPasscode(eventPasscode.trim());
+      const passcodeHash = await hashEventPasscode(eventPasscode.trim());
       const eventResult = await createEvent({
         eventName: eventName.trim() || "Untitled Music Battle",
         eventSlug,
@@ -812,22 +813,6 @@ function createEventSlug(eventName: string) {
       .replace(/^-+|-+$/g, "") || "music-battle";
 
   return `${slugBase}-${Date.now().toString(36)}`;
-}
-
-async function hashPasscode(passcode: string) {
-  if (!globalThis.crypto?.subtle) {
-    throw new Error("Browser crypto is unavailable for passcode hashing.");
-  }
-
-  const encodedPasscode = new TextEncoder().encode(passcode);
-  const digest = await globalThis.crypto.subtle.digest(
-    "SHA-256",
-    encodedPasscode,
-  );
-
-  return Array.from(new Uint8Array(digest))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
 }
 
 function parseOptionalYear(year: string) {
