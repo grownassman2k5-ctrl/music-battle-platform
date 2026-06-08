@@ -1,5 +1,14 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+## Music Battle Platform
+
+Private host-controlled music battle MVP with local CSV setup, Supabase-backed
+events, passcode access, realtime voting, realtime chat/moderation, and
+persisted host/guest/results routes.
+
+For deployment setup, environment variables, Supabase Realtime reminders, and
+Vercel smoke-test steps, see [DEPLOYMENT.md](./DEPLOYMENT.md).
+
 ## Getting Started
 
 First, run the development server:

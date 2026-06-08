@@ -92,6 +92,9 @@ export function SupabaseSchemaDebugPage() {
               <PreviewLink href="/debug/supabase" tone="ghost">
                 Client Check
               </PreviewLink>
+              <PreviewLink href="/debug/deployment" tone="ghost">
+                Deployment
+              </PreviewLink>
               <PreviewLink href="/host/setup" tone="ghost">
                 Host Setup
               </PreviewLink>
@@ -194,6 +197,20 @@ export function SupabaseSchemaDebugPage() {
                 select id limit 1 checks. It does not expose secrets, run
                 migrations, change app data, add authentication, or enable
                 realtime.
+              </p>
+            </Panel>
+
+            <Panel className="p-5">
+              <p className="text-sm font-semibold uppercase text-zinc-500">
+                Realtime reminder
+              </p>
+              <h2 className="mt-2 text-2xl font-black text-white">
+                Enable live sync tables in Supabase
+              </h2>
+              <p className="mt-4 text-sm leading-6 text-zinc-400">
+                Host-to-guest updates, vote totals, and live chat require
+                Supabase Realtime to be enabled for events, rounds, votes, and
+                chat_messages.
               </p>
             </Panel>
           </div>

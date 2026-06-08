@@ -34,6 +34,9 @@ export function SupabaseDebugPage() {
             <PreviewLink href="/debug/supabase-schema" tone="ghost">
               Schema Checklist
             </PreviewLink>
+            <PreviewLink href="/debug/deployment" tone="ghost">
+              Deployment
+            </PreviewLink>
           </div>
         </header>
 

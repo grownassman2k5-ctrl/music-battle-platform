@@ -1951,10 +1951,10 @@ function RunSongSummary({
   return (
     <div className="rounded-md border border-white/10 bg-white/10 p-3">
       <p className="text-xs font-semibold uppercase text-zinc-500">{label}</p>
-      <p className="mt-1 text-sm font-bold text-white">
+      <p className="mt-1 break-words text-sm font-bold text-white">
         {sideSong.side.artistDisplayName || sideConfig.artistDisplayName}
       </p>
-      <p className="mt-1 text-sm leading-5 text-zinc-400">
+      <p className="mt-1 break-words text-sm leading-5 text-zinc-400">
         {sideSong.song.songTitle}
       </p>
       {sideSong.song.appleMusicLink ? (
@@ -2278,7 +2278,7 @@ function HostAccessGate({
             <p className="text-sm font-semibold uppercase text-[#43d9cf]">
               Host access
             </p>
-            <h2 className="mt-3 max-w-3xl text-5xl font-black leading-tight text-white sm:text-6xl">
+            <h2 className="mt-3 max-w-3xl break-words text-5xl font-black leading-tight text-white sm:text-6xl">
               Unlock the control room
             </h2>
             <p className="mt-5 max-w-2xl text-base leading-7 text-zinc-400">
@@ -2375,7 +2375,7 @@ function GuestEventAccessGate({
             <p className="text-sm font-semibold uppercase text-[#43d9cf]">
               Private event
             </p>
-            <h2 className="mt-3 max-w-3xl text-5xl font-black leading-tight text-white sm:text-6xl">
+            <h2 className="mt-3 max-w-3xl break-words text-5xl font-black leading-tight text-white sm:text-6xl">
               {battle.event.eventName}
             </h2>
             <p className="mt-4 text-2xl font-bold text-zinc-200">
@@ -2721,7 +2721,7 @@ function PersistedRouteShell({
   const message =
     state.status === "loading"
       ? "Reading event, sides, songs, and rounds from Supabase."
-      : state.error;
+      : getFriendlyRouteError(state.error, eventSlug);
 
   return (
     <main className="relative min-h-screen overflow-hidden text-white">
@@ -2745,6 +2745,9 @@ function PersistedRouteShell({
           <div className="mt-5 flex flex-wrap gap-2">
             <PreviewLink href="/debug/supabase-schema" tone="ghost">
               Check Tables
+            </PreviewLink>
+            <PreviewLink href="/debug/deployment" tone="ghost">
+              Deployment Check
             </PreviewLink>
             <PreviewLink href="/host/setup">Host Setup</PreviewLink>
           </div>
@@ -2871,7 +2874,7 @@ function PersistedSongCard({
           <p className={`text-sm font-semibold uppercase ${accent.text}`}>
             {sideSong.side.publicDisplayName || sideConfig.publicDisplayName}
           </p>
-          <h2 className="mt-3 text-4xl font-black leading-none text-white">
+          <h2 className="mt-3 break-words text-4xl font-black leading-none text-white">
             {sideSong.side.artistDisplayName || sideConfig.artistDisplayName}
           </h2>
         </div>
@@ -2882,7 +2885,7 @@ function PersistedSongCard({
         <p className="text-sm font-semibold uppercase text-zinc-400">
           Now playing
         </p>
-        <h3 className="mt-3 text-4xl font-black leading-tight text-white">
+        <h3 className="mt-3 break-words text-4xl font-black leading-tight text-white">
           {sideSong.song.songTitle}
         </h3>
         <p className="mt-3 text-base text-zinc-300">
@@ -2891,12 +2894,17 @@ function PersistedSongCard({
         </p>
       </div>
 
-      <div className="mt-8 grid grid-cols-[1fr_auto] items-end gap-4">
+      <div className="mt-8 grid gap-4 sm:grid-cols-[1fr_auto] sm:items-end">
         <div>
           <p className="text-sm text-zinc-500">Visible vote total</p>
           <p className="mt-1 text-4xl font-black text-white">{totals}</p>
         </div>
-        <MockButton disabled={disabled} onClick={onAction} tone={accent.button}>
+        <MockButton
+          className="w-full sm:w-auto"
+          disabled={disabled}
+          onClick={onAction}
+          tone={accent.button}
+        >
           {actionLabel}
         </MockButton>
       </div>
@@ -3745,27 +3753,61 @@ function getGuestVotingMessage(status?: RoundStatus) {
 }
 
 function getFriendlyActionError(error: string) {
-  if (error.toLowerCase().includes("row-level")) {
-    return "Supabase blocked this update with a row-level security rule.";
+  const lowerError = error.toLowerCase();
+
+  if (lowerError.includes("row-level") || lowerError.includes("rls")) {
+    return "Supabase blocked this update with a row-level security rule. Check the MVP RLS policies.";
   }
 
-  if (error.toLowerCase().includes("violates check constraint")) {
+  if (lowerError.includes("violates check constraint")) {
     return "Supabase rejected this update because the event state was invalid.";
+  }
+
+  if (
+    lowerError.includes("failed to fetch") ||
+    lowerError.includes("network") ||
+    lowerError.includes("timed out")
+  ) {
+    return "Supabase did not respond. Check your internet connection and /debug/deployment.";
   }
 
   return error;
 }
 
 function getFriendlyVoteError(error: string) {
-  if (error.toLowerCase().includes("votes can only")) {
+  const lowerError = error.toLowerCase();
+
+  if (lowerError.includes("votes can only")) {
     return "Voting is not open for this round.";
   }
 
-  if (error.toLowerCase().includes("duplicate")) {
+  if (lowerError.includes("duplicate")) {
     return "Your previous vote could not be updated. Try again.";
   }
 
   return getFriendlyActionError(error);
+}
+
+function getFriendlyRouteError(error: string, eventSlug: string) {
+  const lowerError = error.toLowerCase();
+
+  if (lowerError.includes("no event was found")) {
+    return `No saved event was found for "${eventSlug}". Check the link, or save the battle again from Host Setup.`;
+  }
+
+  if (
+    lowerError.includes("failed to fetch") ||
+    lowerError.includes("network") ||
+    lowerError.includes("timed out")
+  ) {
+    return "Supabase did not respond while loading this event. Check /debug/deployment and confirm the Vercel environment variables are set.";
+  }
+
+  if (lowerError.includes("permission") || lowerError.includes("row-level")) {
+    return "Supabase blocked this event load. Check table reachability and temporary MVP RLS policies.";
+  }
+
+  return error;
 }
 
 function getParticipantStorageKey(eventId: string) {

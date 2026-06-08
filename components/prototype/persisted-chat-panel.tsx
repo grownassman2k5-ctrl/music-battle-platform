@@ -531,6 +531,14 @@ function getFriendlyChatError(error: string) {
     return "Supabase blocked this chat action. Check the temporary MVP RLS policies.";
   }
 
+  if (
+    lowerError.includes("failed to fetch") ||
+    lowerError.includes("network") ||
+    lowerError.includes("timed out")
+  ) {
+    return "Chat could not reach Supabase. Check your connection and /debug/deployment.";
+  }
+
   if (lowerError.includes("permission")) {
     return "Supabase permissions blocked this chat action.";
   }

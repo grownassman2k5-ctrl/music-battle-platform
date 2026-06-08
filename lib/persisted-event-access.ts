@@ -103,14 +103,15 @@ export async function verifyEventPasscode(
 
   if (!trimmedPasscode) {
     return {
-      error: "Enter the event passcode.",
+      error: "Enter the event passcode from your host.",
       verified: false,
     };
   }
 
   if (!expectedPasscodeHash) {
     return {
-      error: "This event does not have a saved passcode hash.",
+      error:
+        "This event does not have a saved passcode hash. Ask the host to recreate or resave the event.",
       verified: false,
     };
   }
@@ -122,7 +123,7 @@ export async function verifyEventPasscode(
 
   if (passcodeHash !== expectedPasscodeHash) {
     return {
-      error: "That passcode did not match this event.",
+      error: "That passcode did not match this event. Check the code and try again.",
       verified: false,
     };
   }
