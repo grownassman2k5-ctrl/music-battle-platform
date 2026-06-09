@@ -274,8 +274,8 @@ export function PersistedChatPanel({
   }
 
   return (
-    <Panel className="flex min-h-[32rem] flex-col p-4">
-      <div className="flex items-start justify-between gap-3">
+    <Panel className="flex min-h-[28rem] flex-col p-4 sm:min-h-[32rem]">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-sm font-semibold uppercase text-zinc-500">
             Live chat
@@ -387,7 +387,7 @@ function PersistedChatMessageRow({
           : "border-white/10 bg-black/20"
       }`}
     >
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <p className="truncate text-sm font-bold text-white">
             {message.displayNameSnapshot}
@@ -402,7 +402,7 @@ function PersistedChatMessageRow({
           </div>
         </div>
         {mode === "host" ? (
-          <div className="flex shrink-0 flex-wrap justify-end gap-2">
+          <div className="grid w-full shrink-0 grid-cols-2 gap-2 sm:w-auto sm:flex sm:flex-wrap sm:justify-end">
             <MockButton
               className="min-h-9 px-3"
               disabled={isModerating || message.status !== "visible"}

@@ -12,18 +12,36 @@ export function CopyLinkButton({
   label?: string;
   path: string;
 }) {
+  return (
+    <CopyTextButton
+      className={className}
+      label={label}
+      text={() => new URL(path, window.location.origin).toString()}
+    />
+  );
+}
+
+export function CopyTextButton({
+  className = "",
+  label = "Copy Text",
+  text,
+}: {
+  className?: string;
+  label?: string;
+  text: string | (() => string);
+}) {
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "error">(
     "idle",
   );
 
-  async function copyLink() {
-    const url = new URL(path, window.location.origin).toString();
-
+  async function copyText() {
     try {
+      const value = typeof text === "function" ? text() : text;
+
       if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(url);
+        await navigator.clipboard.writeText(value);
       } else {
-        copyTextFallback(url);
+        copyTextFallback(value);
       }
 
       setCopyStatus("copied");
@@ -35,7 +53,7 @@ export function CopyLinkButton({
   }
 
   return (
-    <MockButton className={className} onClick={() => void copyLink()} tone="ghost">
+    <MockButton className={className} onClick={() => void copyText()} tone="ghost">
       {copyStatus === "copied"
         ? "Copied"
         : copyStatus === "error"

@@ -40,6 +40,7 @@ import type {
   Vote,
 } from "@/lib/types/battle";
 import { AmbientMusicBackground } from "./ambient-music-background";
+import { CopyLinkButton } from "./copy-link-button";
 import { HostRoleControls } from "./host-role-controls";
 import { PersistedChatPanel } from "./persisted-chat-panel";
 import { Scoreboard } from "./scoreboard";
@@ -213,6 +214,24 @@ const accentClass = {
     button: "secondary" as const,
   },
 };
+
+const guestJoinSteps = [
+  "Enter passcode",
+  "Enter display name",
+  "Wait for the host",
+  "Vote when voting opens",
+  "Chat respectfully",
+];
+
+const preEventChecklistItems = [
+  "Open Apple Music playlists",
+  "Start Zoom/Meet/Discord or speaker setup",
+  "Share guest link",
+  "Confirm guests can join",
+  "Test chat",
+  "Test voting",
+  "Start event",
+];
 
 export function PersistedHostBattlePage({
   eventSlug,
@@ -1238,6 +1257,10 @@ function PersistedHostExperience({
           </div>
 
           <aside className="space-y-5">
+            <HostPreEventChecklistPanel
+              eventSlug={eventSlug}
+              eventStatus={battle.event.status}
+            />
             <PersistedSetupSummary battle={battle} setup={setup} />
             <Scoreboard
               scoreboard={scoreboard}
@@ -1854,7 +1877,7 @@ function HostRunOfShowPanel({
         </div>
       </div>
 
-      <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
+      <div className="mt-5 grid gap-4 xl:grid-cols-[minmax(0,1fr)_20rem]">
         <div className="space-y-3">
           <RunMatchupSummary
             label="Current matchup"
@@ -2013,6 +2036,69 @@ function RunChecklistItem({
   );
 }
 
+function HostPreEventChecklistPanel({
+  eventSlug,
+  eventStatus,
+}: {
+  eventSlug: string;
+  eventStatus: EventStatus;
+}) {
+  const [checkedItems, setCheckedItems] = useState<Record<string, boolean>>({});
+  const isLiveOrDone = ["live", "completed", "archived"].includes(eventStatus);
+
+  function toggleItem(item: string) {
+    setCheckedItems((currentItems) => ({
+      ...currentItems,
+      [item]: !currentItems[item],
+    }));
+  }
+
+  return (
+    <Panel className="p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold uppercase text-zinc-500">
+            Pre-event checklist
+          </p>
+          <h2 className="mt-1 text-xl font-bold text-white">
+            Ready for live test
+          </h2>
+        </div>
+        <Pill tone={isLiveOrDone ? "neutral" : "gold"}>
+          {isLiveOrDone ? "Optional" : "Before start"}
+        </Pill>
+      </div>
+
+      <div className="mt-4 grid gap-2">
+        {preEventChecklistItems.map((item) => (
+          <label
+            className="grid cursor-pointer grid-cols-[1.25rem_minmax(0,1fr)] gap-3 rounded-md border border-white/10 bg-white/10 p-3 text-sm font-semibold text-zinc-300 transition hover:border-white/20"
+            key={item}
+          >
+            <input
+              checked={Boolean(checkedItems[item])}
+              className="mt-0.5 h-4 w-4 accent-[#f7c948]"
+              onChange={() => toggleItem(item)}
+              type="checkbox"
+            />
+            <span>{item}</span>
+          </label>
+        ))}
+      </div>
+
+      <CopyLinkButton
+        className="mt-4 w-full"
+        label="Copy Guest Link"
+        path={`/event/${eventSlug}`}
+      />
+      <p className="mt-3 text-xs leading-5 text-zinc-500">
+        Audio is still played or shared by the host outside the app. Use this as
+        a quick run-through list before inviting everyone in.
+      </p>
+    </Panel>
+  );
+}
+
 function HostSongTimerPanel({
   durationSeconds,
   roundView,
@@ -2140,8 +2226,8 @@ function GuestLobbyPanel({
   return (
     <Panel className="p-6">
       <Pill tone="gold">Waiting room</Pill>
-      <h2 className="mt-4 text-4xl font-black text-white">
-        Waiting for host to start
+      <h2 className="mt-4 text-3xl font-black text-white sm:text-4xl">
+        The host has not started the event yet.
       </h2>
       <p className="mt-4 max-w-2xl text-base leading-7 text-zinc-400">
         {battle.event.eventName} is open, but the host has not started the live
@@ -2278,7 +2364,7 @@ function HostAccessGate({
             <p className="text-sm font-semibold uppercase text-[#43d9cf]">
               Host access
             </p>
-            <h2 className="mt-3 max-w-3xl break-words text-5xl font-black leading-tight text-white sm:text-6xl">
+            <h2 className="mt-3 max-w-3xl break-words text-4xl font-black leading-tight text-white sm:text-6xl">
               Unlock the control room
             </h2>
             <p className="mt-5 max-w-2xl text-base leading-7 text-zinc-400">
@@ -2370,30 +2456,40 @@ function GuestEventAccessGate({
           themeLabel={setup.visualThemes[0] ?? "Private Event"}
         />
 
-        <section className="grid flex-1 items-center gap-5 py-6 lg:grid-cols-[minmax(0,1fr)_24rem]">
+        <section className="grid flex-1 items-center gap-5 py-6 xl:grid-cols-[minmax(0,1fr)_26rem]">
           <div>
             <p className="text-sm font-semibold uppercase text-[#43d9cf]">
               Private event
             </p>
-            <h2 className="mt-3 max-w-3xl break-words text-5xl font-black leading-tight text-white sm:text-6xl">
+            <h2 className="mt-3 max-w-3xl break-words text-4xl font-black leading-tight text-white sm:text-6xl">
               {battle.event.eventName}
             </h2>
             <p className="mt-4 text-2xl font-bold text-zinc-200">
               {getBattleMatchupName(battle)}
             </p>
-            <div className="mt-6 grid max-w-3xl gap-3 text-sm leading-6 text-zinc-400">
-              <p>
-                Enter the event passcode and a display name to join the voting
-                room. Your display name is used for votes and live chat.
+            <div className="mt-6 max-w-3xl rounded-lg border border-[#43d9cf]/25 bg-[#43d9cf]/10 p-4">
+              <p className="text-sm font-bold uppercase text-[#cbfffb]">
+                How this works
               </p>
-              <p>
-                Audio is shared by the host outside this app. Listen along in
-                the room or stream, then vote here when the host opens voting.
+              <p className="mt-2 text-sm leading-6 text-zinc-300">
+                Audio will be played or shared by the host outside this app.
+                Keep this page open for voting, chat, and the winner reveal.
               </p>
-              <p>
-                This browser will remember access for this event until you clear
-                it.
-              </p>
+            </div>
+            <div className="mt-5 grid max-w-3xl gap-2 sm:grid-cols-5">
+              {guestJoinSteps.map((step, index) => (
+                <div
+                  className="grid grid-cols-[2rem_minmax(0,1fr)] gap-3 rounded-lg border border-white/10 bg-black/20 p-3 sm:block"
+                  key={step}
+                >
+                  <span className="flex h-8 w-8 items-center justify-center rounded-md border border-[#f7c948]/40 bg-[#f7c948]/10 text-sm font-black text-[#ffe7a3]">
+                    {index + 1}
+                  </span>
+                  <p className="self-center text-sm font-semibold leading-5 text-zinc-300 sm:mt-3">
+                    {step}
+                  </p>
+                </div>
+              ))}
             </div>
           </div>
 
@@ -2409,23 +2505,10 @@ function GuestEventAccessGate({
 
             <label className="mt-5 block">
               <span className="text-sm font-medium text-zinc-300">
-                Display name
-              </span>
-              <input
-                className="mt-2 h-12 w-full rounded-md border border-white/15 bg-black/30 px-4 text-base text-white outline-none transition placeholder:text-zinc-600 focus:border-[#43d9cf]/70"
-                disabled={isChecking}
-                onChange={(event) => setDisplayName(event.target.value)}
-                placeholder="Your stage name"
-                type="text"
-                value={displayName}
-              />
-            </label>
-
-            <label className="mt-4 block">
-              <span className="text-sm font-medium text-zinc-300">
                 Event passcode
               </span>
               <input
+                autoComplete="off"
                 className="mt-2 h-12 w-full rounded-md border border-white/15 bg-black/30 px-4 text-base text-white outline-none transition placeholder:text-zinc-600 focus:border-[#f7c948]/70"
                 disabled={isChecking}
                 onChange={(event) => setPasscode(event.target.value)}
@@ -2440,6 +2523,21 @@ function GuestEventAccessGate({
               />
             </label>
 
+            <label className="mt-4 block">
+              <span className="text-sm font-medium text-zinc-300">
+                Display name
+              </span>
+              <input
+                autoComplete="nickname"
+                className="mt-2 h-12 w-full rounded-md border border-white/15 bg-black/30 px-4 text-base text-white outline-none transition placeholder:text-zinc-600 focus:border-[#43d9cf]/70"
+                disabled={isChecking}
+                onChange={(event) => setDisplayName(event.target.value)}
+                placeholder="Your stage name"
+                type="text"
+                value={displayName}
+              />
+            </label>
+
             <MockButton
               className="mt-4 w-full"
               disabled={isChecking}
@@ -2448,6 +2546,10 @@ function GuestEventAccessGate({
             >
               {isChecking ? "Joining..." : "Join Event"}
             </MockButton>
+            <p className="mt-4 text-xs leading-5 text-zinc-500">
+              This browser remembers event access for testing. Use Leave Event
+              later to clear it.
+            </p>
             <AccessFeedback state={attemptState} />
           </Panel>
         </section>
@@ -2866,7 +2968,7 @@ function PersistedSongCard({
 
   return (
     <article
-      className={`relative min-h-[22rem] overflow-hidden rounded-lg border p-5 transition ${accent.shell} ${className}`}
+      className={`relative min-h-[20rem] overflow-hidden rounded-lg border p-4 transition sm:min-h-[22rem] sm:p-5 ${accent.shell} ${className}`}
     >
       <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-transparent via-white/40 to-transparent" />
       <div className="flex items-start justify-between gap-4">
@@ -2874,7 +2976,7 @@ function PersistedSongCard({
           <p className={`text-sm font-semibold uppercase ${accent.text}`}>
             {sideSong.side.publicDisplayName || sideConfig.publicDisplayName}
           </p>
-          <h2 className="mt-3 break-words text-4xl font-black leading-none text-white">
+          <h2 className="mt-3 break-words text-3xl font-black leading-none text-white sm:text-4xl">
             {sideSong.side.artistDisplayName || sideConfig.artistDisplayName}
           </h2>
         </div>
@@ -2885,7 +2987,7 @@ function PersistedSongCard({
         <p className="text-sm font-semibold uppercase text-zinc-400">
           Now playing
         </p>
-        <h3 className="mt-3 break-words text-4xl font-black leading-tight text-white">
+        <h3 className="mt-3 break-words text-3xl font-black leading-tight text-white sm:text-4xl">
           {sideSong.song.songTitle}
         </h3>
         <p className="mt-3 text-base text-zinc-300">
@@ -2968,7 +3070,7 @@ function PersistedRevealCard({
           <p className="text-sm font-semibold uppercase text-zinc-400">
             Round {roundView.round.roundNumber} winner
           </p>
-          <h2 className="mt-3 text-5xl font-black text-white sm:text-6xl">
+          <h2 className="mt-3 break-words text-4xl font-black text-white sm:text-6xl">
             {winner.side.artistDisplayName || sideConfig.artistDisplayName}
           </h2>
           <p className="mt-4 text-2xl font-bold text-zinc-200">
@@ -3497,8 +3599,8 @@ function getGuestPhaseDetails({
   switch (currentRound.round.status) {
     case "playing":
       return {
-        body: "The host is playing the matchup audio outside the app. Listen now, then wait for voting to open.",
-        headline: "Song playing",
+        body: "The host is playing the matchup audio outside the app. Listen now, then keep this page open for voting.",
+        headline: "The host is playing the songs now.",
         label: "Listen",
         secondaryMessage: "Voting will unlock after the host clicks Open Voting.",
         tone: "gold" as const,
@@ -3508,7 +3610,7 @@ function getGuestPhaseDetails({
         body: selectedSide
           ? `Your current vote is ${currentRound[selectedSide].side.artistDisplayName}. You can change it until voting closes.`
           : "Pick the side that won this round. You can change your vote until the host closes voting.",
-        headline: "Voting is open",
+        headline: "Voting is open.",
         label: "Vote now",
         secondaryMessage: "",
         tone: "cyan" as const,
@@ -3516,20 +3618,22 @@ function getGuestPhaseDetails({
     case "voting_closed":
       return {
         body: "Votes are locked while the host checks totals and gets ready for the reveal.",
-        headline: "Voting is closed",
+        headline: "Voting is closed. Waiting for reveal.",
         label: "Locked",
-        secondaryMessage: "Waiting for winner reveal",
+        secondaryMessage: "Voting is closed. Waiting for reveal.",
         tone: "gold" as const,
       };
     case "revealed":
     case "complete":
       return {
         body: "The winner has been revealed and the scoreboard has been updated.",
-        headline: "Winner revealed",
+        headline: nextRound
+          ? "Winner revealed. Waiting for next round."
+          : "Winner revealed. Waiting for final results.",
         label: "Reveal",
         secondaryMessage: nextRound
-          ? "Waiting for next round"
-          : "Waiting for final results",
+          ? "Winner revealed. Waiting for next round."
+          : "Winner revealed. Waiting for final results.",
         tone: "cyan" as const,
       };
     case "active":
@@ -3537,9 +3641,9 @@ function getGuestPhaseDetails({
     default:
       return {
         body: "The host is lining up the next songs. Voting will stay locked until the round starts and voting opens.",
-        headline: "Waiting for host to start",
+        headline: "The host has not started the event yet.",
         label: "Stand by",
-        secondaryMessage: "Waiting for host to start",
+        secondaryMessage: "The host has not started the event yet.",
         tone: "neutral" as const,
       };
   }
@@ -3714,18 +3818,18 @@ function getEventStatusTone(status: EventStatus) {
 
 function getGuestStatusHeadline(status?: RoundStatus) {
   if (status === "voting_closed") {
-    return "Voting closed";
+    return "Voting is closed. Waiting for reveal.";
   }
 
   if (status === "revealed") {
-    return "Winner revealed";
+    return "Winner revealed. Waiting for next round.";
   }
 
   if (status === "playing") {
-    return "Round in progress";
+    return "The host is playing the songs now.";
   }
 
-  return "Waiting for host";
+  return "The host has not started the event yet.";
 }
 
 function getGuestVotingMessage(status?: RoundStatus) {
@@ -3734,19 +3838,19 @@ function getGuestVotingMessage(status?: RoundStatus) {
   }
 
   if (status === "voting_closed") {
-    return "Voting is closed for this round.";
+    return "Voting is closed. Waiting for reveal.";
   }
 
   if (status === "revealed") {
-    return "The winner has been revealed for this round.";
+    return "Winner revealed. Waiting for next round.";
   }
 
   if (status === "playing") {
-    return "The round has started. Wait for the host to open voting.";
+    return "The host is playing the songs now. Voting will open soon.";
   }
 
   if (status === "active" || status === "queued") {
-    return "The host has not opened voting yet.";
+    return "The host has not started the event yet.";
   }
 
   return "Voting is not available for this round.";

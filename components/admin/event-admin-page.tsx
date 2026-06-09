@@ -3,7 +3,10 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { AmbientMusicBackground } from "@/components/prototype/ambient-music-background";
-import { CopyLinkButton } from "@/components/prototype/copy-link-button";
+import {
+  CopyLinkButton,
+  CopyTextButton,
+} from "@/components/prototype/copy-link-button";
 import { MockButton, Panel, Pill, PreviewLink } from "@/components/prototype/ui";
 import { listSavedEvents } from "@/lib/supabase/battle-repository";
 import type { BattleEvent } from "@/lib/types/battle";
@@ -250,10 +253,14 @@ function AdminEventCard({ event }: { event: BattleEvent }) {
         <AdminFact label="Mode" value={event.matchupMode} />
       </div>
 
-      <div className="mt-4 grid gap-2 sm:grid-cols-3">
+      <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
         <CopyLinkButton label="Copy Host Link" path={hostPath} />
         <CopyLinkButton label="Copy Guest Link" path={guestPath} />
         <CopyLinkButton label="Copy Results Link" path={resultsPath} />
+        <CopyTextButton
+          label="Copy Guest Invitation"
+          text={() => buildGuestInvitation(event, guestPath)}
+        />
       </div>
     </article>
   );
@@ -302,6 +309,20 @@ function getFriendlyAdminError(error: string) {
   }
 
   return error;
+}
+
+function buildGuestInvitation(event: BattleEvent, guestPath: string) {
+  const guestUrl = new URL(guestPath, window.location.origin).toString();
+
+  return [
+    `${event.eventName}`,
+    "",
+    `Guest link: ${guestUrl}`,
+    "Passcode: [enter passcode here]",
+    "",
+    "Audio will be shared by the host outside the app.",
+    "Enter the passcode, add a display name, wait for the host, vote when voting opens, and chat respectfully.",
+  ].join("\n");
 }
 
 function withAdminTimeout<T>(promise: Promise<T>, timeoutMs: number) {
