@@ -285,6 +285,49 @@ export async function listSavedEvents(
   }
 }
 
+export async function deleteTestEventBySlug(
+  eventSlug: string,
+): Promise<RepositoryResult<{ eventId: UUID; eventSlug: string }>> {
+  try {
+    const supabase = getSupabaseBrowserClient();
+    const { data: eventData, error: lookupError } = await supabase
+      .from("events")
+      .select("id,event_slug")
+      .eq("event_slug", eventSlug)
+      .maybeSingle();
+
+    if (lookupError) {
+      return failure("Delete test event lookup failed", lookupError);
+    }
+
+    if (!eventData) {
+      return {
+        data: null,
+        error: `Delete test event failed: No event was found for "${eventSlug}".`,
+      };
+    }
+
+    // TODO: Protect this admin-only delete behind Supabase Auth or a server-side
+    // admin action before public launch. This uses temporary MVP RLS policies.
+    const { error: deleteError } = await supabase
+      .from("events")
+      .delete()
+      .eq("id", (eventData as Pick<EventRow, "id">).id)
+      .eq("event_slug", eventSlug);
+
+    if (deleteError) {
+      return failure("Delete test event failed", deleteError);
+    }
+
+    return success({
+      eventId: (eventData as Pick<EventRow, "id">).id,
+      eventSlug: (eventData as Pick<EventRow, "event_slug">).event_slug,
+    });
+  } catch (error) {
+    return failure("Delete test event failed", error);
+  }
+}
+
 export async function checkSupabaseTables(
   tableNames: readonly SupabaseBattleTableName[] = battleTableNames,
 ): Promise<RepositoryResult<SupabaseTableCheck[]>> {

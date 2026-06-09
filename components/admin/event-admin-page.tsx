@@ -8,7 +8,10 @@ import {
   CopyTextButton,
 } from "@/components/prototype/copy-link-button";
 import { MockButton, Panel, Pill, PreviewLink } from "@/components/prototype/ui";
-import { listSavedEvents } from "@/lib/supabase/battle-repository";
+import {
+  deleteTestEventBySlug,
+  listSavedEvents,
+} from "@/lib/supabase/battle-repository";
 import type { BattleEvent } from "@/lib/types/battle";
 
 type AdminLoadState =
@@ -20,6 +23,31 @@ type AdminLoadState =
   | {
       error: string;
       events: BattleEvent[];
+      status: "error";
+    };
+
+type AdminNotice =
+  | {
+      message: string;
+      status: "success";
+    }
+  | {
+      message: string;
+      status: "error";
+    }
+  | null;
+
+type DeleteActionState =
+  | {
+      message: string;
+      status: "idle";
+    }
+  | {
+      message: string;
+      status: "deleting";
+    }
+  | {
+      message: string;
       status: "error";
     };
 
@@ -40,6 +68,7 @@ export function EventAdminPage() {
     events: [],
     status: "loading",
   });
+  const [adminNotice, setAdminNotice] = useState<AdminNotice>(null);
 
   const loadEvents = useCallback(async () => {
     setLoadState((currentState) => ({
@@ -149,9 +178,31 @@ export function EventAdminPage() {
                 </p>
               ) : null}
 
+              {adminNotice ? (
+                <p
+                  className={`mt-5 rounded-lg border p-4 text-sm font-semibold ${
+                    adminNotice.status === "success"
+                      ? "border-[#43d9cf]/30 bg-[#43d9cf]/10 text-[#cbfffb]"
+                      : "border-[#ff6b8a]/30 bg-[#ff6b8a]/10 text-[#ffe2e8]"
+                  }`}
+                >
+                  {adminNotice.message}
+                </p>
+              ) : null}
+
               <div className="mt-5 grid gap-4">
                 {loadState.events.map((event) => (
-                  <AdminEventCard event={event} key={event.id} />
+                  <AdminEventCard
+                    event={event}
+                    key={event.id}
+                    onDeleted={(deletedEvent) => {
+                      setAdminNotice({
+                        message: `${deletedEvent.eventName} was deleted. Refreshing saved events...`,
+                        status: "success",
+                      });
+                      void loadEvents();
+                    }}
+                  />
                 ))}
               </div>
 
@@ -209,10 +260,52 @@ export function EventAdminPage() {
   );
 }
 
-function AdminEventCard({ event }: { event: BattleEvent }) {
+function AdminEventCard({
+  event,
+  onDeleted,
+}: {
+  event: BattleEvent;
+  onDeleted: (event: BattleEvent) => void;
+}) {
   const hostPath = `/host/${event.eventSlug}`;
   const guestPath = `/event/${event.eventSlug}`;
   const resultsPath = `/results/${event.eventSlug}`;
+  const [deletePanelOpen, setDeletePanelOpen] = useState(false);
+  const [confirmationSlug, setConfirmationSlug] = useState("");
+  const [deleteActionState, setDeleteActionState] =
+    useState<DeleteActionState>({
+      message: "",
+      status: "idle",
+    });
+  const confirmationMatches = confirmationSlug === event.eventSlug;
+  const isDeleting = deleteActionState.status === "deleting";
+
+  async function deleteEvent() {
+    if (!confirmationMatches) {
+      setDeleteActionState({
+        message: "Type the exact event slug before deleting this test event.",
+        status: "error",
+      });
+      return;
+    }
+
+    setDeleteActionState({
+      message: "Deleting test event from Supabase...",
+      status: "deleting",
+    });
+
+    const result = await deleteTestEventBySlug(event.eventSlug);
+
+    if (result.error) {
+      setDeleteActionState({
+        message: getFriendlyAdminError(result.error),
+        status: "error",
+      });
+      return;
+    }
+
+    onDeleted(event);
+  }
 
   return (
     <article className="rounded-lg border border-white/10 bg-black/20 p-4">
@@ -262,6 +355,89 @@ function AdminEventCard({ event }: { event: BattleEvent }) {
           text={() => buildGuestInvitation(event, guestPath)}
         />
       </div>
+
+      <div className="mt-5 border-t border-white/10 pt-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm font-semibold uppercase text-zinc-500">
+              Test cleanup
+            </p>
+            <p className="mt-1 text-sm leading-6 text-zinc-400">
+              Use only for events you are done testing.
+            </p>
+          </div>
+          <MockButton
+            className="w-full sm:w-auto"
+            disabled={isDeleting}
+            onClick={() => {
+              setDeletePanelOpen((isOpen) => !isOpen);
+              setDeleteActionState({
+                message: "",
+                status: "idle",
+              });
+            }}
+            tone="danger"
+          >
+            Delete Test Event
+          </MockButton>
+        </div>
+
+        {deletePanelOpen ? (
+          <div className="mt-4 rounded-lg border border-[#ff6b8a]/30 bg-[#ff6b8a]/10 p-4">
+            <Pill tone="rose">Permanent delete</Pill>
+            <h4 className="mt-4 text-lg font-black text-white">
+              Type the event slug to confirm
+            </h4>
+            <p className="mt-2 text-sm leading-6 text-[#ffe2e8]">
+              This permanently removes the event, songs, rounds, votes,
+              participants, chat messages, and moderation records. It cannot be
+              undone.
+            </p>
+            <p className="mt-3 break-words font-mono text-sm font-bold text-white">
+              {event.eventSlug}
+            </p>
+            <label className="mt-4 block">
+              <span className="text-sm font-semibold text-zinc-200">
+                Confirm event slug
+              </span>
+              <input
+                className="mt-2 h-12 w-full rounded-md border border-[#ff6b8a]/30 bg-black/30 px-4 font-mono text-sm text-white outline-none transition placeholder:text-zinc-600 focus:border-[#ff6b8a]/70"
+                disabled={isDeleting}
+                onChange={(inputEvent) =>
+                  setConfirmationSlug(inputEvent.target.value)
+                }
+                placeholder={event.eventSlug}
+                type="text"
+                value={confirmationSlug}
+              />
+            </label>
+            <div className="mt-4 grid gap-2 sm:grid-cols-[1fr_auto] sm:items-center">
+              <p className="text-xs leading-5 text-[#ffe2e8]">
+                TODO: protect this admin-only action with Supabase Auth before
+                public launch.
+              </p>
+              <MockButton
+                disabled={!confirmationMatches || isDeleting}
+                onClick={() => void deleteEvent()}
+                tone="danger"
+              >
+                {isDeleting ? "Deleting..." : "Permanently Delete"}
+              </MockButton>
+            </div>
+            {deleteActionState.message ? (
+              <p
+                className={`mt-4 rounded-md border px-3 py-2 text-sm font-semibold ${
+                  deleteActionState.status === "error"
+                    ? "border-[#ff6b8a]/40 bg-black/20 text-[#ffe2e8]"
+                    : "border-[#f7c948]/30 bg-[#f7c948]/10 text-[#ffe7a3]"
+                }`}
+              >
+                {deleteActionState.message}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
     </article>
   );
 }
@@ -297,7 +473,15 @@ function getFriendlyAdminError(error: string) {
   const lowerError = error.toLowerCase();
 
   if (lowerError.includes("row-level") || lowerError.includes("rls")) {
-    return "Supabase blocked event listing with a row-level security policy. Check MVP RLS settings.";
+    return "Supabase blocked this admin action with a row-level security policy. Check MVP RLS settings.";
+  }
+
+  if (
+    lowerError.includes("foreign key") ||
+    lowerError.includes("violates") ||
+    lowerError.includes("constraint")
+  ) {
+    return "Supabase could not delete the event because related rows are still protected by database constraints.";
   }
 
   if (

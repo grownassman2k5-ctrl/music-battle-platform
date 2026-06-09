@@ -358,6 +358,18 @@ create policy "TEMP MVP allow anonymous event updates"
   using (true)
   with check (true);
 
+-- TEMPORARY MVP ONLY: enables /admin/events test cleanup through the
+-- publishable browser client. Deleting an event cascades to event_sides, songs,
+-- rounds, participants, votes, chat_messages, and moderation_actions through
+-- the foreign keys above. Protect this action with Supabase Auth or a
+-- server-side admin action before public launch.
+drop policy if exists "TEMP MVP allow anonymous event deletion" on public.events;
+create policy "TEMP MVP allow anonymous event deletion"
+  on public.events
+  for delete
+  to anon, authenticated
+  using (true);
+
 drop policy if exists "TEMP MVP allow anonymous event side reads" on public.event_sides;
 create policy "TEMP MVP allow anonymous event side reads"
   on public.event_sides
