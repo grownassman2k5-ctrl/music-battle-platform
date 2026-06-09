@@ -23,6 +23,7 @@ import {
   saveImportedSongs,
 } from "@/lib/supabase/battle-repository";
 import { AmbientMusicBackground } from "./ambient-music-background";
+import { CopyLinkButton } from "./copy-link-button";
 import { Panel, Pill, PreviewLink, MockButton } from "./ui";
 
 const tableHeaders = [
@@ -716,26 +717,15 @@ export function HostSetupPage() {
                         : "border-[#f7c948]/30 bg-[#f7c948]/10 text-[#ffe7a3]"
                   }`}
                 >
-                  <p>{supabaseSaveMessage}</p>
                   {supabaseSaveStatus === "success" && supabaseEventSlug ? (
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      <PreviewLink href={`/host/${supabaseEventSlug}`}>
-                        Persisted Host
-                      </PreviewLink>
-                      <PreviewLink
-                        href={`/event/${supabaseEventSlug}`}
-                        tone="ghost"
-                      >
-                        Persisted Guest
-                      </PreviewLink>
-                      <PreviewLink
-                        href={`/results/${supabaseEventSlug}`}
-                        tone="ghost"
-                      >
-                        Persisted Results
-                      </PreviewLink>
-                    </div>
-                  ) : null}
+                    <SavedSupabaseEventPanel
+                      eventName={eventName || "Untitled Event"}
+                      eventSlug={supabaseEventSlug}
+                      message={supabaseSaveMessage}
+                    />
+                  ) : (
+                    <p>{supabaseSaveMessage}</p>
+                  )}
                 </div>
               ) : null}
 
@@ -831,6 +821,83 @@ function getFriendlyErrorMessage(error: unknown) {
   }
 
   return "Something went wrong while saving to Supabase.";
+}
+
+function SavedSupabaseEventPanel({
+  eventName,
+  eventSlug,
+  message,
+}: {
+  eventName: string;
+  eventSlug: string;
+  message: string;
+}) {
+  const links = [
+    {
+      label: "Host link",
+      path: `/host/${eventSlug}`,
+      tone: "primary" as const,
+    },
+    {
+      label: "Guest link",
+      path: `/event/${eventSlug}`,
+      tone: "ghost" as const,
+    },
+    {
+      label: "Results link",
+      path: `/results/${eventSlug}`,
+      tone: "ghost" as const,
+    },
+  ];
+
+  return (
+    <div>
+      <p>{message}</p>
+      <div className="mt-4 grid gap-3 rounded-lg border border-white/10 bg-black/20 p-4 text-sm">
+        <div>
+          <p className="text-xs font-semibold uppercase text-zinc-500">
+            Event name
+          </p>
+          <p className="mt-1 break-words text-base font-bold text-white">
+            {eventName}
+          </p>
+        </div>
+        <div>
+          <p className="text-xs font-semibold uppercase text-zinc-500">
+            Event slug
+          </p>
+          <p className="mt-1 break-words font-mono text-sm text-[#cbfffb]">
+            {eventSlug}
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-3">
+        {links.map((link) => (
+          <div
+            className="grid gap-2 rounded-lg border border-white/10 bg-black/20 p-3 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center"
+            key={link.path}
+          >
+            <span className="break-words font-mono text-sm text-zinc-300">
+              {link.path}
+            </span>
+            <PreviewLink className="w-full sm:w-auto" href={link.path} tone={link.tone}>
+              Open
+            </PreviewLink>
+            <CopyLinkButton
+              className="w-full sm:w-auto"
+              label={`Copy ${link.label}`}
+              path={link.path}
+            />
+          </div>
+        ))}
+      </div>
+
+      <PreviewLink className="mt-4 w-full" href="/admin/events" tone="ghost">
+        Go to Event Admin Dashboard
+      </PreviewLink>
+    </div>
+  );
 }
 
 function StatTile({ label, value }: { label: string; value: string }) {

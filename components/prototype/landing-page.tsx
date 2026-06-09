@@ -36,6 +36,24 @@ const demoLinks = [
   },
 ];
 
+const organizerLinks = [
+  {
+    href: "/host/setup",
+    title: "Host Setup",
+    description: "Upload the CSV, configure passcode, and save a battle.",
+  },
+  {
+    href: "/admin/events",
+    title: "Event Admin Dashboard",
+    description: "Find saved events, open routes, and copy live links.",
+  },
+  {
+    href: "/debug/deployment",
+    title: "Debug Deployment",
+    description: "Check Supabase env, tables, realtime reminders, and routes.",
+  },
+];
+
 export function LandingPage() {
   return (
     <main className="relative min-h-screen overflow-hidden text-white">
@@ -100,6 +118,40 @@ export function LandingPage() {
                 </Panel>
               ))}
             </div>
+
+            <Panel className="mt-8 p-5">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <p className="text-sm font-semibold uppercase text-zinc-500">
+                    Organizer tools
+                  </p>
+                  <h2 className="mt-2 text-2xl font-black text-white">
+                    Setup, admin, and deployment checks
+                  </h2>
+                </div>
+                <Pill tone="gold">Private MVP</Pill>
+              </div>
+              <div className="mt-5 grid gap-3 lg:grid-cols-3">
+                {organizerLinks.map((link) => (
+                  <div
+                    className="rounded-lg border border-white/10 bg-black/20 p-4"
+                    key={link.href}
+                  >
+                    <p className="text-sm font-bold text-white">{link.title}</p>
+                    <p className="mt-2 min-h-12 text-sm leading-6 text-zinc-400">
+                      {link.description}
+                    </p>
+                    <PreviewLink
+                      className="mt-4 w-full"
+                      href={link.href}
+                      tone="ghost"
+                    >
+                      Open
+                    </PreviewLink>
+                  </div>
+                ))}
+              </div>
+            </Panel>
           </div>
 
           <JoinEventCard event={mockBattleEvent} />

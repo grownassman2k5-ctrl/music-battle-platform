@@ -265,6 +265,26 @@ export async function createEvent(
   }
 }
 
+export async function listSavedEvents(
+  limit = 50,
+): Promise<RepositoryResult<BattleEvent[]>> {
+  try {
+    const { data, error } = await getSupabaseBrowserClient()
+      .from("events")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(limit);
+
+    if (error) {
+      return failure("Load saved events failed", error);
+    }
+
+    return success((data as EventRow[]).map(mapBattleEvent));
+  } catch (error) {
+    return failure("Load saved events failed", error);
+  }
+}
+
 export async function checkSupabaseTables(
   tableNames: readonly SupabaseBattleTableName[] = battleTableNames,
 ): Promise<RepositoryResult<SupabaseTableCheck[]>> {
