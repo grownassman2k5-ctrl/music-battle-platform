@@ -4,10 +4,12 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 
 Private host-controlled music battle MVP with local CSV setup, Supabase-backed
 events, passcode access, realtime voting, realtime chat/moderation, and
-persisted host/guest/results routes.
+persisted host/guest/results routes. The deployed MVP also supports an optional
+Daily-powered in-app audio room so a host can share browser-tab audio without
+uploading or storing music files.
 
-For deployment setup, environment variables, Supabase Realtime reminders, and
-Vercel smoke-test steps, see [DEPLOYMENT.md](./DEPLOYMENT.md).
+For deployment setup, environment variables, Supabase Realtime reminders, Daily
+audio setup, and Vercel smoke-test steps, see [DEPLOYMENT.md](./DEPLOYMENT.md).
 
 ## Getting Started
 
@@ -24,6 +26,20 @@ bun dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+
+Local environment variables live in `.env.local`. Supabase is required for the
+persisted MVP routes. Daily is optional:
+
+```bash
+NEXT_PUBLIC_SUPABASE_URL=your-supabase-project-url
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your-supabase-publishable-key
+DAILY_API_KEY=your-daily-api-key
+# Optional fallback/diagnostic value. Daily room creation returns the room URL.
+NEXT_PUBLIC_DAILY_DOMAIN=your-team.daily.co
+```
+
+If `DAILY_API_KEY` is missing, the app keeps working and shows External Audio
+Mode as the fallback. Never expose the Daily API key in browser code.
 
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 

@@ -42,6 +42,7 @@ import type {
 import { AmbientMusicBackground } from "./ambient-music-background";
 import { CopyLinkButton } from "./copy-link-button";
 import { HostRoleControls } from "./host-role-controls";
+import { InAppAudioPanel } from "./in-app-audio-panel";
 import { PersistedChatPanel } from "./persisted-chat-panel";
 import { Scoreboard } from "./scoreboard";
 import { ThemeSelector } from "./theme-selector";
@@ -1261,6 +1262,11 @@ function PersistedHostExperience({
               eventSlug={eventSlug}
               eventStatus={battle.event.status}
             />
+            <InAppAudioPanel
+              eventName={battle.event.eventName}
+              eventSlug={eventSlug}
+              role="host"
+            />
             <PersistedSetupSummary battle={battle} setup={setup} />
             <Scoreboard
               scoreboard={scoreboard}
@@ -1625,6 +1631,14 @@ function PersistedGuestExperience({
               participant={participant}
               state={participantState}
             />
+            {participant ? (
+              <InAppAudioPanel
+                displayName={participant.displayName}
+                eventName={battle.event.eventName}
+                eventSlug={eventSlug}
+                role="guest"
+              />
+            ) : null}
             <Scoreboard
               scoreboard={scoreboard}
               title="Persisted tally"

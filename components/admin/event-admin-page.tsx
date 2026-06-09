@@ -54,6 +54,7 @@ type DeleteActionState =
 const liveTestItems = [
   "host access",
   "guest passcode",
+  "audio fallback",
   "voting",
   "realtime vote totals",
   "chat",
@@ -230,6 +231,18 @@ export function EventAdminPage() {
                 This dashboard uses the public Supabase client and temporary MVP
                 policies. Keep it private for testing. Protect this route with
                 Supabase Auth before production.
+              </p>
+            </Panel>
+
+            <Panel className="p-4">
+              <Pill tone="cyan">Daily optional</Pill>
+              <h2 className="mt-4 text-xl font-bold text-white">
+                In-app audio needs Daily
+              </h2>
+              <p className="mt-3 text-sm leading-6 text-zinc-400">
+                Add `DAILY_API_KEY` in Vercel to turn on managed browser
+                audio. External Zoom, Discord, Meet, or speaker audio remains
+                the fallback.
               </p>
             </Panel>
 

@@ -21,9 +21,17 @@ const persistedRoutes = [
   "/results/[eventSlug]",
 ];
 
+type DailyConfigStatus = {
+  configured: boolean;
+  hasApiKey: boolean;
+  hasDomain: boolean;
+  message: string;
+};
+
 export function DeploymentDebugPage() {
   const connectionCheck = getSupabaseConnectionCheck();
   const [checks, setChecks] = useState<SupabaseTableCheck[]>([]);
+  const [dailyStatus, setDailyStatus] = useState<DailyConfigStatus | null>(null);
   const [schemaError, setSchemaError] = useState("");
   const [isChecking, setIsChecking] = useState(true);
   const availableTableCount = checks.filter(
@@ -74,8 +82,22 @@ export function DeploymentDebugPage() {
         isReady: true,
         label: "Persisted routes available",
       },
+      {
+        detail: dailyStatus
+          ? `Server key present: ${dailyStatus.hasApiKey ? "yes" : "no"}. Optional domain present: ${dailyStatus.hasDomain ? "yes" : "no"}.`
+          : "Checking optional Daily audio configuration...",
+        isReady: Boolean(dailyStatus?.configured),
+        label: "Daily in-app audio configured",
+        optional: true,
+      },
     ],
-    [availableTableCount, connectionCheck, expectedTablesReady, isChecking],
+    [
+      availableTableCount,
+      connectionCheck,
+      dailyStatus,
+      expectedTablesReady,
+      isChecking,
+    ],
   );
 
   const runChecks = useCallback(async () => {
@@ -97,6 +119,24 @@ export function DeploymentDebugPage() {
 
   useEffect(() => {
     let isActive = true;
+
+    fetch("/api/daily/audio-room")
+      .then((response) => response.json() as Promise<DailyConfigStatus>)
+      .then((status) => {
+        if (isActive) {
+          setDailyStatus(status);
+        }
+      })
+      .catch(() => {
+        if (isActive) {
+          setDailyStatus({
+            configured: false,
+            hasApiKey: false,
+            hasDomain: false,
+            message: "Daily status check failed.",
+          });
+        }
+      });
 
     checkSupabaseTables().then((result) => {
       if (!isActive) {
@@ -272,10 +312,21 @@ function DeploymentChecklistRow({
     isReady: boolean;
     label: string;
     manual?: boolean;
+    optional?: boolean;
   };
 }) {
-  const tone = item.manual ? "gold" : item.isReady ? "cyan" : "rose";
-  const label = item.manual ? "Manual" : item.isReady ? "Ready" : "Needs check";
+  const tone = item.manual || (item.optional && !item.isReady)
+    ? "gold"
+    : item.isReady
+      ? "cyan"
+      : "rose";
+  const label = item.manual
+    ? "Manual"
+    : item.optional && !item.isReady
+      ? "Optional"
+      : item.isReady
+        ? "Ready"
+        : "Needs check";
 
   return (
     <div className="rounded-lg border border-white/10 bg-white/10 p-4">
