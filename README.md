@@ -33,13 +33,15 @@ persisted MVP routes. Daily is optional:
 ```bash
 NEXT_PUBLIC_SUPABASE_URL=your-supabase-project-url
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your-supabase-publishable-key
+ADMIN_ACCESS_CODE=choose-a-private-admin-code
 DAILY_API_KEY=your-daily-api-key
 # Optional fallback/diagnostic value. Daily room creation returns the room URL.
 NEXT_PUBLIC_DAILY_DOMAIN=your-team.daily.co
 ```
 
 If `DAILY_API_KEY` is missing, the app keeps working and shows External Audio
-Mode as the fallback. Never expose the Daily API key in browser code.
+Mode as the fallback. Never expose `ADMIN_ACCESS_CODE`, `DAILY_API_KEY`,
+Supabase service role keys, or other private secrets in browser code.
 
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 

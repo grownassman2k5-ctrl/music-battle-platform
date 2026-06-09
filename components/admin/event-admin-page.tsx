@@ -9,9 +9,10 @@ import {
 } from "@/components/prototype/copy-link-button";
 import { MockButton, Panel, Pill, PreviewLink } from "@/components/prototype/ui";
 import {
-  deleteTestEventBySlug,
-  listSavedEvents,
-} from "@/lib/supabase/battle-repository";
+  clearStoredAdminAccessToken,
+  readStoredAdminAccessToken,
+  saveStoredAdminAccessToken,
+} from "@/lib/admin-access";
 import type { BattleEvent } from "@/lib/types/battle";
 
 type AdminLoadState =
@@ -51,6 +52,30 @@ type DeleteActionState =
       status: "error";
     };
 
+type AdminAccessState = {
+  message: string;
+  status: "checking" | "locked" | "verified";
+  token: string;
+};
+
+type AdminAccessAttemptState =
+  | {
+      message: string;
+      status: "idle";
+    }
+  | {
+      message: string;
+      status: "checking";
+    }
+  | {
+      message: string;
+      status: "verified";
+    }
+  | {
+      message: string;
+      status: "error";
+    };
+
 const liveTestItems = [
   "host access",
   "guest passcode",
@@ -64,24 +89,78 @@ const liveTestItems = [
 ];
 
 export function EventAdminPage() {
+  const [adminAccess, setAdminAccess] = useState<AdminAccessState>({
+    message: "Checking saved admin access...",
+    status: "checking",
+    token: "",
+  });
+  const [adminAccessAttempt, setAdminAccessAttempt] =
+    useState<AdminAccessAttemptState>({
+      message: "",
+      status: "idle",
+    });
   const [loadState, setLoadState] = useState<AdminLoadState>({
     error: "",
     events: [],
-    status: "loading",
+    status: "ready",
   });
   const [adminNotice, setAdminNotice] = useState<AdminNotice>(null);
 
-  const loadEvents = useCallback(async () => {
+  const loadEvents = useCallback(async (adminToken: string) => {
+    if (!adminToken) {
+      setLoadState({
+        error: "Unlock admin access before loading saved events.",
+        events: [],
+        status: "error",
+      });
+      return;
+    }
+
     setLoadState((currentState) => ({
       error: "",
       events: currentState.events,
       status: "loading",
     }));
 
-    let result: Awaited<ReturnType<typeof listSavedEvents>>;
-
     try {
-      result = await withAdminTimeout(listSavedEvents(), 9000);
+      const response = await withAdminTimeout(
+        fetch("/api/admin/events", {
+          headers: {
+            Authorization: `Bearer ${adminToken}`,
+          },
+        }),
+        9000,
+      );
+      const payload = (await response.json()) as Partial<{
+        events: BattleEvent[];
+        message: string;
+      }>;
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          clearStoredAdminAccessToken();
+          setAdminAccess({
+            message: "Admin access expired. Enter the admin code again.",
+            status: "locked",
+            token: "",
+          });
+        }
+
+        setLoadState({
+          error: getFriendlyAdminError(
+            payload.message ?? "Saved events could not be loaded.",
+          ),
+          events: [],
+          status: "error",
+        });
+        return;
+      }
+
+      setLoadState({
+        error: "",
+        events: payload.events ?? [],
+        status: "ready",
+      });
     } catch {
       setLoadState({
         error: getFriendlyAdminError("Supabase request timed out."),
@@ -90,34 +169,118 @@ export function EventAdminPage() {
       });
       return;
     }
-
-    if (result.error || !result.data) {
-      setLoadState({
-        error: getFriendlyAdminError(
-          result.error ?? "Supabase did not return saved events.",
-        ),
-        events: [],
-        status: "error",
-      });
-      return;
-    }
-
-    setLoadState({
-      error: "",
-      events: result.data,
-      status: "ready",
-    });
   }, []);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      void loadEvents();
-    }, 0);
+    let isActive = true;
+    let loadTimer: number | null = null;
+
+    Promise.resolve().then(() => {
+      const adminToken = readStoredAdminAccessToken();
+
+      if (!isActive) {
+        return;
+      }
+
+      if (!adminToken) {
+        setAdminAccess({
+          message: "Enter the admin access code to manage saved events.",
+          status: "locked",
+          token: "",
+        });
+        return;
+      }
+
+      setAdminAccess({
+        message: "Admin access is verified on this browser.",
+        status: "verified",
+        token: adminToken,
+      });
+
+      loadTimer = window.setTimeout(() => {
+        void loadEvents(adminToken);
+      }, 0);
+    });
 
     return () => {
-      window.clearTimeout(timer);
+      isActive = false;
+
+      if (loadTimer) {
+        window.clearTimeout(loadTimer);
+      }
     };
   }, [loadEvents]);
+
+  async function verifyAdminAccess(adminCode: string) {
+    setAdminAccessAttempt({
+      message: "Checking admin access code...",
+      status: "checking",
+    });
+
+    try {
+      const response = await fetch("/api/admin/access", {
+        body: JSON.stringify({ adminCode }),
+        headers: {
+          "Content-Type": "application/json",
+        },
+        method: "POST",
+      });
+      const payload = (await response.json()) as Partial<{
+        message: string;
+        token: string;
+        verified: boolean;
+      }>;
+
+      if (!response.ok || !payload.verified || !payload.token) {
+        setAdminAccessAttempt({
+          message: payload.message ?? "Admin access could not be verified.",
+          status: "error",
+        });
+        return;
+      }
+
+      saveStoredAdminAccessToken(payload.token);
+      setAdminAccess({
+        message: "Admin access verified on this browser.",
+        status: "verified",
+        token: payload.token,
+      });
+      setAdminAccessAttempt({
+        message: "Admin access verified.",
+        status: "verified",
+      });
+      await loadEvents(payload.token);
+    } catch {
+      setAdminAccessAttempt({
+        message: "Admin access check failed. Try again.",
+        status: "error",
+      });
+    }
+  }
+
+  function clearAdminAccess() {
+    clearStoredAdminAccessToken();
+    setAdminAccess({
+      message: "Admin access cleared. Enter the code again.",
+      status: "locked",
+      token: "",
+    });
+    setLoadState({
+      error: "",
+      events: [],
+      status: "ready",
+    });
+  }
+
+  if (adminAccess.status !== "verified") {
+    return (
+      <AdminAccessGate
+        accessState={adminAccess}
+        attemptState={adminAccessAttempt}
+        onSubmit={(adminCode) => void verifyAdminAccess(adminCode)}
+      />
+    );
+  }
 
   return (
     <main className="relative min-h-screen overflow-hidden text-white">
@@ -140,6 +303,9 @@ export function EventAdminPage() {
               </h1>
             </div>
             <div className="flex flex-wrap gap-2">
+              <MockButton onClick={clearAdminAccess} tone="danger">
+                Clear Admin Access
+              </MockButton>
               <PreviewLink href="/host/setup" tone="primary">
                 Host Setup
               </PreviewLink>
@@ -166,7 +332,7 @@ export function EventAdminPage() {
                 </div>
                 <MockButton
                   disabled={loadState.status === "loading"}
-                  onClick={() => void loadEvents()}
+                  onClick={() => void loadEvents(adminAccess.token)}
                   tone="ghost"
                 >
                   {loadState.status === "loading" ? "Refreshing..." : "Refresh Events"}
@@ -194,6 +360,7 @@ export function EventAdminPage() {
               <div className="mt-5 grid gap-4">
                 {loadState.events.map((event) => (
                   <AdminEventCard
+                    adminAccessToken={adminAccess.token}
                     event={event}
                     key={event.id}
                     onDeleted={(deletedEvent) => {
@@ -201,7 +368,7 @@ export function EventAdminPage() {
                         message: `${deletedEvent.eventName} was deleted. Refreshing saved events...`,
                         status: "success",
                       });
-                      void loadEvents();
+                      void loadEvents(adminAccess.token);
                     }}
                   />
                 ))}
@@ -225,12 +392,13 @@ export function EventAdminPage() {
             <Panel className="p-4">
               <Pill tone="rose">MVP warning</Pill>
               <h2 className="mt-4 text-xl font-bold text-white">
-                Admin is not protected yet
+                Admin uses temporary access
               </h2>
               <p className="mt-3 text-sm leading-6 text-zinc-400">
-                This dashboard uses the public Supabase client and temporary MVP
-                policies. Keep it private for testing. Protect this route with
-                Supabase Auth before production.
+                This dashboard now requires `ADMIN_ACCESS_CODE`, but it still
+                uses temporary MVP Supabase policies. Keep it private for
+                testing. Protect this route with Supabase Auth before
+                production.
               </p>
             </Panel>
 
@@ -273,10 +441,99 @@ export function EventAdminPage() {
   );
 }
 
+function AdminAccessGate({
+  accessState,
+  attemptState,
+  onSubmit,
+}: {
+  accessState: AdminAccessState;
+  attemptState: AdminAccessAttemptState;
+  onSubmit: (adminCode: string) => void;
+}) {
+  const [adminCode, setAdminCode] = useState("");
+  const isChecking =
+    accessState.status === "checking" || attemptState.status === "checking";
+
+  return (
+    <main className="relative min-h-screen overflow-hidden text-white">
+      <AmbientMusicBackground density="calm" />
+      <div className="mx-auto flex min-h-screen w-full max-w-3xl items-center px-5 py-10 sm:px-8">
+        <Panel className="w-full p-6">
+          <Link
+            className="text-sm font-semibold text-zinc-400 transition hover:text-white"
+            href="/"
+          >
+            Back to landing
+          </Link>
+          <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold uppercase text-[#43d9cf]">
+                Organizer access
+              </p>
+              <h1 className="mt-2 text-3xl font-black text-white">
+                Unlock event admin
+              </h1>
+            </div>
+            <Pill tone={isChecking ? "gold" : "rose"}>Admin code</Pill>
+          </div>
+          <p className="mt-4 text-sm leading-6 text-zinc-400">
+            {accessState.message} This private beta gate uses the server-only
+            `ADMIN_ACCESS_CODE`. It should be replaced with Supabase Auth before
+            public launch.
+          </p>
+
+          <form
+            className="mt-6 grid gap-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              onSubmit(adminCode);
+            }}
+          >
+            <label>
+              <span className="text-sm font-semibold text-zinc-200">
+                Admin access code
+              </span>
+              <input
+                className="mt-2 h-12 w-full rounded-md border border-white/15 bg-black/30 px-4 text-white outline-none transition placeholder:text-zinc-600 focus:border-[#43d9cf]/70"
+                disabled={isChecking}
+                onChange={(event) => setAdminCode(event.target.value)}
+                placeholder="Enter admin code"
+                type="password"
+                value={adminCode}
+              />
+            </label>
+            <MockButton
+              disabled={isChecking}
+              onClick={() => onSubmit(adminCode)}
+              tone="primary"
+            >
+              {isChecking ? "Checking..." : "Unlock Admin Dashboard"}
+            </MockButton>
+          </form>
+
+          {attemptState.message ? (
+            <p
+              className={`mt-5 rounded-lg border p-4 text-sm font-semibold ${
+                attemptState.status === "error"
+                  ? "border-[#ff6b8a]/30 bg-[#ff6b8a]/10 text-[#ffe2e8]"
+                  : "border-[#43d9cf]/30 bg-[#43d9cf]/10 text-[#cbfffb]"
+              }`}
+            >
+              {attemptState.message}
+            </p>
+          ) : null}
+        </Panel>
+      </div>
+    </main>
+  );
+}
+
 function AdminEventCard({
+  adminAccessToken,
   event,
   onDeleted,
 }: {
+  adminAccessToken: string;
   event: BattleEvent;
   onDeleted: (event: BattleEvent) => void;
 }) {
@@ -307,11 +564,26 @@ function AdminEventCard({
       status: "deleting",
     });
 
-    const result = await deleteTestEventBySlug(event.eventSlug);
+    const response = await fetch(
+      `/api/admin/events/${encodeURIComponent(event.eventSlug)}`,
+      {
+        body: JSON.stringify({
+          confirmationSlug,
+        }),
+        headers: {
+          Authorization: `Bearer ${adminAccessToken}`,
+          "Content-Type": "application/json",
+        },
+        method: "DELETE",
+      },
+    );
+    const payload = (await response.json()) as Partial<{ message: string }>;
 
-    if (result.error) {
+    if (!response.ok) {
       setDeleteActionState({
-        message: getFriendlyAdminError(result.error),
+        message: getFriendlyAdminError(
+          payload.message ?? "Delete test event failed.",
+        ),
         status: "error",
       });
       return;

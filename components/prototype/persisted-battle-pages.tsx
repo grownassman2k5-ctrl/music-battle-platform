@@ -13,7 +13,7 @@ import {
   clearPersistedEventAccess,
   readPersistedEventAccess,
   savePersistedEventAccess,
-  verifyEventPasscode,
+  verifyPersistedEventAccess,
   type PersistedAccessRole,
 } from "@/lib/persisted-event-access";
 import { getSupabaseBrowserClient } from "@/lib/supabase/browser-client";
@@ -39,6 +39,7 @@ import type {
   Song,
   Vote,
 } from "@/lib/types/battle";
+import { validateDisplayName } from "@/lib/security/validation";
 import { AmbientMusicBackground } from "./ambient-music-background";
 import { CopyLinkButton } from "./copy-link-button";
 import { HostRoleControls } from "./host-role-controls";
@@ -508,7 +509,7 @@ function useLocalEventAccess(eventId: string, role: PersistedAccessRole) {
         return;
       }
 
-      if (!storedAccess) {
+      if (!storedAccess?.accessToken) {
         setAccessState({
           status: "locked",
           message:
@@ -534,13 +535,16 @@ function useLocalEventAccess(eventId: string, role: PersistedAccessRole) {
   }, [eventId, role]);
 
   function markVerified({
+    accessToken,
     displayName,
     participantId,
   }: {
+    accessToken: string;
     displayName?: string;
     participantId?: string;
-  } = {}) {
+  }) {
     savePersistedEventAccess({
+      accessToken,
       displayName,
       eventId,
       participantId,
@@ -633,12 +637,12 @@ function useGuestParticipant(eventId: string) {
   }, [eventId]);
 
   async function join(displayName: string) {
-    const trimmedDisplayName = displayName.trim();
+    const displayNameValidation = validateDisplayName(displayName);
 
-    if (!trimmedDisplayName) {
+    if (displayNameValidation.error) {
       setParticipantState({
         status: "needs_join",
-        message: "Enter a display name to join.",
+        message: displayNameValidation.error,
       });
       return null;
     }
@@ -649,7 +653,7 @@ function useGuestParticipant(eventId: string) {
     });
 
     const result = await joinEventAsParticipant(eventId, {
-      displayName: trimmedDisplayName,
+      displayName: displayNameValidation.value,
       role: "guest",
     });
 
@@ -1070,10 +1074,11 @@ function PersistedHostExperience({
     });
 
     try {
-      const result = await verifyEventPasscode(
+      const result = await verifyPersistedEventAccess({
+        eventSlug,
         passcode,
-        battle.event.passcodeHash,
-      );
+        role: "host",
+      });
 
       if (!result.verified) {
         setHostAccessAttempt({
@@ -1083,7 +1088,9 @@ function PersistedHostExperience({
         return;
       }
 
-      markHostVerified();
+      markHostVerified({
+        accessToken: result.accessToken,
+      });
       setHostAccessAttempt({
         status: "verified",
         message: "Host access verified.",
@@ -1263,6 +1270,7 @@ function PersistedHostExperience({
               eventStatus={battle.event.status}
             />
             <InAppAudioPanel
+              eventId={battle.event.id}
               eventName={battle.event.eventName}
               eventSlug={eventSlug}
               role="host"
@@ -1460,12 +1468,12 @@ function PersistedGuestExperience({
     displayName: string;
     passcode: string;
   }) {
-    const trimmedDisplayName = displayName.trim();
+    const displayNameValidation = validateDisplayName(displayName);
 
-    if (!trimmedDisplayName && !participant) {
+    if (!participant && displayNameValidation.error) {
       setGuestAccessAttempt({
         status: "error",
-        message: "Enter a display name to join this event.",
+        message: displayNameValidation.error,
       });
       return;
     }
@@ -1476,10 +1484,12 @@ function PersistedGuestExperience({
     });
 
     try {
-      const result = await verifyEventPasscode(
+      const result = await verifyPersistedEventAccess({
+        displayName: displayNameValidation.value || participant?.displayName,
+        eventSlug,
         passcode,
-        battle.event.passcodeHash,
-      );
+        role: "guest",
+      });
 
       if (!result.verified) {
         setGuestAccessAttempt({
@@ -1490,7 +1500,7 @@ function PersistedGuestExperience({
       }
 
       const joinedParticipant =
-        participant ?? (await join(trimmedDisplayName));
+        participant ?? (await join(displayNameValidation.value));
 
       if (!joinedParticipant) {
         setGuestAccessAttempt({
@@ -1501,6 +1511,7 @@ function PersistedGuestExperience({
       }
 
       markGuestVerified({
+        accessToken: result.accessToken,
         displayName: joinedParticipant.displayName,
         participantId: joinedParticipant.id,
       });
@@ -1634,6 +1645,7 @@ function PersistedGuestExperience({
             {participant ? (
               <InAppAudioPanel
                 displayName={participant.displayName}
+                eventId={battle.event.id}
                 eventName={battle.event.eventName}
                 eventSlug={eventSlug}
                 role="guest"

@@ -123,7 +123,7 @@ type EventRow = {
   id: UUID;
   event_name: string;
   event_slug: string;
-  passcode_hash: string;
+  passcode_hash?: string | null;
   passcode_hint: string | null;
   host_display_name: string | null;
   status: EventStatus;
@@ -135,6 +135,9 @@ type EventRow = {
   created_at: ISODateTimeString;
   updated_at: ISODateTimeString;
 };
+
+const safeEventSelect =
+  "id,event_name,event_slug,passcode_hint,host_display_name,status,matchup_mode,default_song_duration_seconds,current_round_number,started_at,completed_at,created_at,updated_at";
 
 type EventSideRow = {
   id: UUID;
@@ -252,7 +255,7 @@ export async function createEvent(
         default_song_duration_seconds:
           input.defaultSongDurationSeconds ?? 120,
       })
-      .select("*")
+      .select(safeEventSelect)
       .single();
 
     if (error) {
@@ -271,7 +274,7 @@ export async function listSavedEvents(
   try {
     const { data, error } = await getSupabaseBrowserClient()
       .from("events")
-      .select("*")
+      .select(safeEventSelect)
       .order("created_at", { ascending: false })
       .limit(limit);
 
@@ -282,49 +285,6 @@ export async function listSavedEvents(
     return success((data as EventRow[]).map(mapBattleEvent));
   } catch (error) {
     return failure("Load saved events failed", error);
-  }
-}
-
-export async function deleteTestEventBySlug(
-  eventSlug: string,
-): Promise<RepositoryResult<{ eventId: UUID; eventSlug: string }>> {
-  try {
-    const supabase = getSupabaseBrowserClient();
-    const { data: eventData, error: lookupError } = await supabase
-      .from("events")
-      .select("id,event_slug")
-      .eq("event_slug", eventSlug)
-      .maybeSingle();
-
-    if (lookupError) {
-      return failure("Delete test event lookup failed", lookupError);
-    }
-
-    if (!eventData) {
-      return {
-        data: null,
-        error: `Delete test event failed: No event was found for "${eventSlug}".`,
-      };
-    }
-
-    // TODO: Protect this admin-only delete behind Supabase Auth or a server-side
-    // admin action before public launch. This uses temporary MVP RLS policies.
-    const { error: deleteError } = await supabase
-      .from("events")
-      .delete()
-      .eq("id", (eventData as Pick<EventRow, "id">).id)
-      .eq("event_slug", eventSlug);
-
-    if (deleteError) {
-      return failure("Delete test event failed", deleteError);
-    }
-
-    return success({
-      eventId: (eventData as Pick<EventRow, "id">).id,
-      eventSlug: (eventData as Pick<EventRow, "event_slug">).event_slug,
-    });
-  } catch (error) {
-    return failure("Delete test event failed", error);
   }
 }
 
@@ -368,7 +328,7 @@ export async function loadPersistedBattleBySlug(
     const supabase = getSupabaseBrowserClient();
     const { data: eventData, error: eventError } = await supabase
       .from("events")
-      .select("*")
+      .select(safeEventSelect)
       .eq("event_slug", eventSlug)
       .maybeSingle();
 
@@ -919,7 +879,7 @@ function mapBattleEvent(row: EventRow): BattleEvent {
     eventName: row.event_name,
     title: row.event_name,
     eventSlug: row.event_slug,
-    passcodeHash: row.passcode_hash,
+    passcodeHash: row.passcode_hash ?? undefined,
     passcodeHint: row.passcode_hint,
     hostDisplayName: row.host_display_name,
     status: row.status,

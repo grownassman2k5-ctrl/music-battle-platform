@@ -14,6 +14,10 @@ import type {
   Participant,
   UUID,
 } from "@/lib/types/battle";
+import {
+  maxChatMessageLength,
+  validateChatMessage,
+} from "@/lib/security/validation";
 import { MockButton, Panel, Pill } from "./ui";
 
 type PersistedChatMode = "guest" | "host";
@@ -27,7 +31,6 @@ type ChatModerationState = {
   message: string;
 };
 
-const chatMessageMaxLength = 1000;
 const blockedChatTerms = [
   "asshole",
   "bitch",
@@ -75,7 +78,7 @@ export function PersistedChatPanel({
     [includeModerated, messages],
   );
   const canSend = mode === "guest" && Boolean(participant);
-  const remainingCharacters = chatMessageMaxLength - draft.length;
+  const remainingCharacters = maxChatMessageLength - draft.length;
 
   const refreshMessages = useCallback(
     async ({ quiet = false }: { quiet?: boolean } = {}) => {
@@ -193,7 +196,7 @@ export function PersistedChatPanel({
       return;
     }
 
-    const cleanMessage = draft.trim();
+    const cleanMessage = validateChatMessage(draft).value;
     setSendStatus("sending");
     setSendMessage("Sending message...");
 
@@ -333,7 +336,7 @@ export function PersistedChatPanel({
           <textarea
             className="min-h-24 resize-none rounded-md border border-white/15 bg-black/30 px-4 py-3 text-sm leading-6 text-white outline-none placeholder:text-zinc-600"
             disabled={!canSend || sendStatus === "sending"}
-            maxLength={chatMessageMaxLength}
+            maxLength={maxChatMessageLength}
             onChange={(event) => setDraft(event.target.value)}
             placeholder={
               canSend ? "Drop a kind hot take" : "Join the event to chat"
@@ -498,17 +501,13 @@ function HostModerationFeedback({ state }: { state: ChatModerationState }) {
 }
 
 function validateChatDraft(draft: string) {
-  const cleanMessage = draft.trim();
+  const messageValidation = validateChatMessage(draft);
 
-  if (!cleanMessage) {
-    return "Write a message before sending.";
+  if (messageValidation.error) {
+    return messageValidation.error;
   }
 
-  if (cleanMessage.length > chatMessageMaxLength) {
-    return `Keep chat messages under ${chatMessageMaxLength} characters.`;
-  }
-
-  const normalizedMessage = cleanMessage.toLowerCase();
+  const normalizedMessage = messageValidation.value.toLowerCase();
   const blockedTerm = blockedChatTerms.find((term) =>
     new RegExp(`\\b${escapeRegex(term)}\\b`, "i").test(normalizedMessage),
   );
@@ -544,7 +543,7 @@ function getFriendlyChatError(error: string) {
   }
 
   if (lowerError.includes("1000") || lowerError.includes("message_body")) {
-    return `Keep chat messages under ${chatMessageMaxLength} characters.`;
+    return `Keep chat messages under ${maxChatMessageLength} characters.`;
   }
 
   return error;

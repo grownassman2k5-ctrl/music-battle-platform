@@ -4,14 +4,26 @@ import {
   getDailyAudioConfigStatus,
   type DailyAudioRole,
 } from "@/lib/daily/audio-room";
+import {
+  verifyEventAccessToken,
+  type EventAccessRole,
+} from "@/lib/security/server-tokens";
+import { validateEventSlug } from "@/lib/security/validation";
+import { createSupabaseServerClient } from "@/lib/supabase/server-client";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 type AudioRoomRequestBody = {
+  accessToken?: string;
   displayName?: string;
   eventSlug?: string;
   role?: DailyAudioRole;
+};
+
+type AudioAccessRow = {
+  id: string;
+  passcode_hash: string | null;
 };
 
 export function GET() {
@@ -23,6 +35,16 @@ export function GET() {
 }
 
 export async function POST(request: NextRequest) {
+  const configStatus = getDailyAudioConfigStatus();
+
+  if (!configStatus.configured) {
+    return NextResponse.json({
+      configured: false,
+      message:
+        "In-app audio is not configured yet. Add DAILY_API_KEY, then redeploy.",
+    });
+  }
+
   let body: AudioRoomRequestBody;
 
   try {
@@ -37,14 +59,14 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const eventSlug = body.eventSlug?.trim();
+  const eventSlugValidation = validateEventSlug(body.eventSlug ?? "");
   const role = body.role;
 
-  if (!eventSlug) {
+  if (eventSlugValidation.error) {
     return NextResponse.json(
       {
         configured: false,
-        message: "Missing event slug for the audio room.",
+        message: eventSlugValidation.error,
       },
       { status: 400 },
     );
@@ -61,11 +83,27 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    // TODO: protect host token creation with Supabase Auth or a server-side host
-    // access check before public launch. This private MVP relies on route access.
+    const accessResult = await verifyDailyEventAccess({
+      accessToken: body.accessToken,
+      eventSlug: eventSlugValidation.value,
+      role,
+    });
+
+    if (!accessResult.verified) {
+      return NextResponse.json(
+        {
+          configured: true,
+          message: accessResult.error,
+        },
+        { status: 401 },
+      );
+    }
+
+    // TODO: replace this signed passcode marker with Supabase Auth or a
+    // server-side host role check before public launch.
     const audioRoom = await createOrRetrieveDailyAudioRoom({
       displayName: body.displayName?.trim() ?? "",
-      eventSlug,
+      eventSlug: eventSlugValidation.value,
       role,
     });
 
@@ -82,4 +120,51 @@ export async function POST(request: NextRequest) {
       { status: 502 },
     );
   }
+}
+
+async function verifyDailyEventAccess({
+  accessToken,
+  eventSlug,
+  role,
+}: {
+  accessToken?: string;
+  eventSlug: string;
+  role: EventAccessRole;
+}) {
+  const { data, error } = await createSupabaseServerClient()
+    .from("events")
+    .select("id,passcode_hash")
+    .eq("event_slug", eventSlug)
+    .maybeSingle();
+
+  if (error) {
+    return {
+      error: `Audio access lookup failed: ${error.message}`,
+      verified: false,
+    };
+  }
+
+  if (!data) {
+    return {
+      error: "No event was found for this audio room.",
+      verified: false,
+    };
+  }
+
+  const event = data as AudioAccessRow;
+
+  if (!event.passcode_hash) {
+    return {
+      error: "This event does not have a saved passcode hash.",
+      verified: false,
+    };
+  }
+
+  return verifyEventAccessToken({
+    eventId: event.id,
+    eventSlug,
+    passcodeHash: event.passcode_hash,
+    requiredRole: role,
+    token: accessToken,
+  });
 }

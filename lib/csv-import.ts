@@ -1,3 +1,5 @@
+import { sanitizeCsvCell } from "@/lib/security/validation";
+
 export type MatchupMode = "fixed" | "randomized";
 
 export type ImportedSong = {
@@ -127,7 +129,7 @@ function getCell(
   column: string,
 ) {
   const index = headerIndexes.get(column);
-  return index === undefined ? "" : row[index]?.trim() ?? "";
+  return index === undefined ? "" : sanitizeCsvCell(row[index] ?? "");
 }
 
 function parseOptionalNumber(value: string) {
@@ -253,6 +255,25 @@ export function validateCsvImport(
 ): CsvImportResult {
   const errors: string[] = [];
   const warnings: string[] = [];
+  const csvByteLength = new Blob([csvText]).size;
+
+  if (csvByteLength > 1024 * 1024) {
+    return {
+      detectedSides: [],
+      errors: ["CSV file is too large for this MVP import. Keep it under 1 MB."],
+      matchups: [],
+      missingColumns: [],
+      songs: [],
+      summary: {
+        matchupCount: 0,
+        sideCounts: [],
+        totalRows: 0,
+        validSongs: 0,
+      },
+      warnings: [],
+    };
+  }
+
   const rows = parseCsv(csvText);
   const requiredColumns =
     mode === "fixed"
@@ -274,6 +295,10 @@ export function validateCsvImport(
       missingColumns: requiredColumns,
       detectedSides: [],
     };
+  }
+
+  if (rows.length > 501) {
+    errors.push("CSV has too many rows for this MVP import. Keep it to 500 songs or fewer.");
   }
 
   const headers = rows[0].map(normalizeHeader);

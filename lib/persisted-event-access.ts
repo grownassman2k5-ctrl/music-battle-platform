@@ -4,12 +4,34 @@ export type PersistedAccessRole = "guest" | "host";
 
 export type PersistedEventAccess = {
   version: 1;
+  accessToken?: string;
   eventId: UUID;
   role: PersistedAccessRole;
   displayName?: string;
   participantId?: UUID;
   verifiedAt: string;
 };
+
+type VerifyPersistedEventAccessInput = {
+  displayName?: string;
+  eventSlug: string;
+  passcode: string;
+  role: PersistedAccessRole;
+};
+
+type VerifyPersistedEventAccessResult =
+  | {
+      accessToken: string;
+      error: "";
+      eventId: string;
+      verified: true;
+    }
+  | {
+      accessToken: "";
+      error: string;
+      eventId: "";
+      verified: false;
+    };
 
 function getEventAccessStorageKey(eventId: UUID, role: PersistedAccessRole) {
   return `music-battle-platform.access.${eventId}.${role}.v1`;
@@ -79,6 +101,48 @@ export function clearPersistedEventAccess(
   window.localStorage.removeItem(getEventAccessStorageKey(eventId, role));
 }
 
+export async function verifyPersistedEventAccess({
+  displayName,
+  eventSlug,
+  passcode,
+  role,
+}: VerifyPersistedEventAccessInput): Promise<VerifyPersistedEventAccessResult> {
+  const response = await fetch("/api/event-access/verify", {
+    body: JSON.stringify({
+      displayName,
+      eventSlug,
+      passcode,
+      role,
+    }),
+    headers: {
+      "Content-Type": "application/json",
+    },
+    method: "POST",
+  });
+  const payload = (await response.json()) as Partial<{
+    accessToken: string;
+    eventId: string;
+    message: string;
+    verified: boolean;
+  }>;
+
+  if (!response.ok || !payload.verified || !payload.accessToken) {
+    return {
+      accessToken: "",
+      error: payload.message ?? "Event access could not be verified.",
+      eventId: "",
+      verified: false,
+    };
+  }
+
+  return {
+    accessToken: payload.accessToken,
+    error: "",
+    eventId: payload.eventId ?? "",
+    verified: true,
+  };
+}
+
 export async function hashEventPasscode(passcode: string) {
   if (!globalThis.crypto?.subtle) {
     throw new Error("Browser crypto is unavailable for passcode hashing.");
@@ -93,43 +157,4 @@ export async function hashEventPasscode(passcode: string) {
   return Array.from(new Uint8Array(digest))
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
-}
-
-export async function verifyEventPasscode(
-  passcode: string,
-  expectedPasscodeHash?: string | null,
-) {
-  const trimmedPasscode = passcode.trim();
-
-  if (!trimmedPasscode) {
-    return {
-      error: "Enter the event passcode from your host.",
-      verified: false,
-    };
-  }
-
-  if (!expectedPasscodeHash) {
-    return {
-      error:
-        "This event does not have a saved passcode hash. Ask the host to recreate or resave the event.",
-      verified: false,
-    };
-  }
-
-  // Temporary MVP: this compares hashes in the browser because the current app
-  // uses only the publishable Supabase client. Move passcode verification to a
-  // server action, Edge Function, or SECURITY DEFINER RPC before public launch.
-  const passcodeHash = await hashEventPasscode(trimmedPasscode);
-
-  if (passcodeHash !== expectedPasscodeHash) {
-    return {
-      error: "That passcode did not match this event. Check the code and try again.",
-      verified: false,
-    };
-  }
-
-  return {
-    error: "",
-    verified: true,
-  };
 }

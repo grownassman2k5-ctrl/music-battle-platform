@@ -28,9 +28,15 @@ type DailyConfigStatus = {
   message: string;
 };
 
+type AdminConfigStatus = {
+  configured: boolean;
+  message: string;
+};
+
 export function DeploymentDebugPage() {
   const connectionCheck = getSupabaseConnectionCheck();
   const [checks, setChecks] = useState<SupabaseTableCheck[]>([]);
+  const [adminStatus, setAdminStatus] = useState<AdminConfigStatus | null>(null);
   const [dailyStatus, setDailyStatus] = useState<DailyConfigStatus | null>(null);
   const [schemaError, setSchemaError] = useState("");
   const [isChecking, setIsChecking] = useState(true);
@@ -83,6 +89,13 @@ export function DeploymentDebugPage() {
         label: "Persisted routes available",
       },
       {
+        detail: adminStatus
+          ? `Server admin code present: ${adminStatus.configured ? "yes" : "no"}.`
+          : "Checking ADMIN_ACCESS_CODE configuration...",
+        isReady: Boolean(adminStatus?.configured),
+        label: "Admin access code configured",
+      },
+      {
         detail: dailyStatus
           ? `Server key present: ${dailyStatus.hasApiKey ? "yes" : "no"}. Optional domain present: ${dailyStatus.hasDomain ? "yes" : "no"}.`
           : "Checking optional Daily audio configuration...",
@@ -93,6 +106,7 @@ export function DeploymentDebugPage() {
     ],
     [
       availableTableCount,
+      adminStatus,
       connectionCheck,
       dailyStatus,
       expectedTablesReady,
@@ -119,6 +133,22 @@ export function DeploymentDebugPage() {
 
   useEffect(() => {
     let isActive = true;
+
+    fetch("/api/admin/access")
+      .then((response) => response.json() as Promise<AdminConfigStatus>)
+      .then((status) => {
+        if (isActive) {
+          setAdminStatus(status);
+        }
+      })
+      .catch(() => {
+        if (isActive) {
+          setAdminStatus({
+            configured: false,
+            message: "Admin access status check failed.",
+          });
+        }
+      });
 
     fetch("/api/daily/audio-room")
       .then((response) => response.json() as Promise<DailyConfigStatus>)

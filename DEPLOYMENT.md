@@ -11,6 +11,7 @@ Local development uses `.env.local` in the project root.
 ```bash
 NEXT_PUBLIC_SUPABASE_URL=your-supabase-project-url
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your-supabase-publishable-key
+ADMIN_ACCESS_CODE=choose-a-private-admin-code
 ```
 
 Optional in-app audio uses Daily. Keep the API key server-side only.
@@ -27,13 +28,27 @@ Add the same variables in Vercel:
 2. Go to Settings > Environment Variables.
 3. Add `NEXT_PUBLIC_SUPABASE_URL`.
 4. Add `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`.
-5. Optional in-app audio: add `DAILY_API_KEY`.
-6. Optional: add `NEXT_PUBLIC_DAILY_DOMAIN`.
-7. Redeploy after saving environment variables.
+5. Add `ADMIN_ACCESS_CODE`.
+6. Optional in-app audio: add `DAILY_API_KEY`.
+7. Optional: add `NEXT_PUBLIC_DAILY_DOMAIN`.
+8. Redeploy after saving environment variables.
 
 Do not add a Supabase service role key to the browser app.
-Do not expose the Daily API key in browser code; it should only be read by
-server-side routes.
+Do not expose `ADMIN_ACCESS_CODE`, `DAILY_API_KEY`, service role keys, or any
+other private secret in browser code. Only safe public values should use
+`NEXT_PUBLIC_`.
+
+## Private Beta Security Checklist
+
+- `.env.local` is ignored by Git and should stay local.
+- `ADMIN_ACCESS_CODE` is required before `/admin/events` can list or delete
+  saved events.
+- Event passcodes are verified by a server route; normal browser event loads do
+  not receive `passcode_hash`.
+- Daily audio token creation requires the browser to have verified host or
+  guest event access first.
+- The app still uses temporary MVP Supabase RLS policies. Do not treat this as
+  production-grade access control until Supabase Auth and tighter RLS are added.
 
 ## Supabase Checks
 
@@ -88,28 +103,31 @@ External Zoom, Discord, Meet, phone, or speaker audio remains the recommended
 fallback for a family/friends live test.
 
 Private-use warning: this MVP creates Daily meeting tokens from an app route,
-but host authorization is still temporary until Supabase Auth or server-side
-host verification is added.
+but host authorization is still temporary until Supabase Auth/server-side host
+roles are added.
 
 ## Vercel Smoke Test
 
 After deploying:
 
 1. Open `/debug/deployment` and confirm public env variables are present.
-2. Confirm the expected Supabase tables are reachable.
-3. Open `/host/setup` and save a small test event to Supabase.
-4. Open `/host/[eventSlug]`, `/event/[eventSlug]`, and `/results/[eventSlug]`.
-5. Test passcode entry, guest join, realtime voting, realtime chat, moderation,
+2. Confirm `ADMIN_ACCESS_CODE` is configured.
+3. Confirm the expected Supabase tables are reachable.
+4. Open `/admin/events`, enter the admin code, and confirm saved events load.
+5. Open `/host/setup` and save a small test event to Supabase.
+6. Open `/host/[eventSlug]`, `/event/[eventSlug]`, and `/results/[eventSlug]`.
+7. Test passcode entry, guest join, realtime voting, realtime chat, moderation,
    winner reveal, and results.
-6. Optional: test Daily in-app audio from a desktop Chrome or Edge host browser.
+8. Optional: test Daily in-app audio from a desktop Chrome or Edge host browser.
 
 ## Current MVP Limitations
 
 - Supabase Auth is not added yet.
-- Passcode verification is browser-side and temporary.
 - RLS policies are development-friendly and need tightening before public use.
 - Host timer state is client-side only.
+- Host round controls, voting, chat, and moderation still use browser Supabase
+  writes under MVP policies.
 - External audio is still the safest fallback even when Daily in-app audio is
   configured.
-- Daily host token creation needs real server-side host authorization before a
-  public launch.
+- Admin and event access use temporary signed local browser markers. Replace
+  them with Supabase Auth/server-side role checks before public launch.

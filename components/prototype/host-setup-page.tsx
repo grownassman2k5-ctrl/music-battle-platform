@@ -22,6 +22,10 @@ import {
   saveGeneratedRounds,
   saveImportedSongs,
 } from "@/lib/supabase/battle-repository";
+import {
+  validateEventName,
+  validatePasscode,
+} from "@/lib/security/validation";
 import { AmbientMusicBackground } from "./ambient-music-background";
 import { CopyLinkButton } from "./copy-link-button";
 import { Panel, Pill, PreviewLink, MockButton } from "./ui";
@@ -184,11 +188,18 @@ export function HostSetupPage() {
       return;
     }
 
-    if (!eventPasscode.trim()) {
+    const eventNameValidation = validateEventName(eventName);
+    const passcodeValidation = validatePasscode(eventPasscode);
+
+    if (eventNameValidation.error) {
       setSupabaseSaveStatus("error");
-      setSupabaseSaveMessage(
-        "Add an event passcode before saving this battle to Supabase.",
-      );
+      setSupabaseSaveMessage(eventNameValidation.error);
+      return;
+    }
+
+    if (passcodeValidation.error) {
+      setSupabaseSaveStatus("error");
+      setSupabaseSaveMessage(passcodeValidation.error);
       return;
     }
 
@@ -197,10 +208,10 @@ export function HostSetupPage() {
     setSupabaseEventSlug("");
 
     try {
-      const eventSlug = createEventSlug(eventName);
-      const passcodeHash = await hashEventPasscode(eventPasscode.trim());
+      const eventSlug = createEventSlug(eventNameValidation.value);
+      const passcodeHash = await hashEventPasscode(passcodeValidation.value);
       const eventResult = await createEvent({
-        eventName: eventName.trim() || "Untitled Music Battle",
+        eventName: eventNameValidation.value,
         eventSlug,
         passcodeHash,
         hostDisplayName: "Host",
@@ -378,6 +389,7 @@ export function HostSetupPage() {
                   </span>
                   <input
                     className="mt-2 h-12 w-full rounded-md border border-white/15 bg-black/30 px-4 text-base text-white outline-none transition placeholder:text-zinc-600 focus:border-[#f7c948]/70"
+                    maxLength={100}
                     onChange={(event) => setEventName(event.target.value)}
                     type="text"
                     value={eventName}
@@ -389,6 +401,7 @@ export function HostSetupPage() {
                   </span>
                   <input
                     className="mt-2 h-12 w-full rounded-md border border-white/15 bg-black/30 px-4 text-base text-white outline-none transition placeholder:text-zinc-600 focus:border-[#43d9cf]/70"
+                    maxLength={80}
                     onChange={(event) => setEventPasscode(event.target.value)}
                     placeholder="Choose a private passcode"
                     type="password"

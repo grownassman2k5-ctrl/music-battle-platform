@@ -6,6 +6,7 @@ import type {
   DailyEventObject,
   DailyParticipant,
 } from "@daily-co/daily-js";
+import { readPersistedEventAccess } from "@/lib/persisted-event-access";
 import { MockButton, Panel, Pill } from "./ui";
 
 type AudioRole = "host" | "guest";
@@ -49,11 +50,13 @@ const statusLabel: Record<AudioStatus, string> = {
 
 export function InAppAudioPanel({
   displayName,
+  eventId,
   eventName,
   eventSlug,
   role,
 }: {
   displayName?: string | null;
+  eventId: string;
   eventName: string;
   eventSlug: string;
   role: AudioRole;
@@ -83,8 +86,11 @@ export function InAppAudioPanel({
   }, []);
 
   async function requestAudioRoom() {
+    const accessToken =
+      readPersistedEventAccess(eventId, role)?.accessToken ?? "";
     const response = await fetch("/api/daily/audio-room", {
       body: JSON.stringify({
+        accessToken,
         displayName: displayName || (isHost ? "Host" : "Guest"),
         eventSlug,
         role,
