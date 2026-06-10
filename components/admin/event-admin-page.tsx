@@ -13,6 +13,7 @@ import {
   readStoredAdminAccessToken,
   saveStoredAdminAccessToken,
 } from "@/lib/admin-access";
+import { getCurrentAdminSession } from "@/lib/admin-auth";
 import type { BattleEvent } from "@/lib/types/battle";
 
 type AdminLoadState =
@@ -76,6 +77,13 @@ type AdminAccessAttemptState =
       status: "error";
     };
 
+type AdminAuthState = {
+  accessToken: string;
+  email: string;
+  message: string;
+  status: "checking" | "signed_out" | "signed_in";
+};
+
 const liveTestItems = [
   "host access",
   "guest passcode",
@@ -89,6 +97,12 @@ const liveTestItems = [
 ];
 
 export function EventAdminPage() {
+  const [adminAuth, setAdminAuth] = useState<AdminAuthState>({
+    accessToken: "",
+    email: "",
+    message: "Checking Supabase Auth session...",
+    status: "checking",
+  });
   const [adminAccess, setAdminAccess] = useState<AdminAccessState>({
     message: "Checking saved admin access...",
     status: "checking",
@@ -106,10 +120,10 @@ export function EventAdminPage() {
   });
   const [adminNotice, setAdminNotice] = useState<AdminNotice>(null);
 
-  const loadEvents = useCallback(async (adminToken: string) => {
-    if (!adminToken) {
+  const loadEvents = useCallback(async (authToken: string, adminToken: string) => {
+    if (!authToken || !adminToken) {
       setLoadState({
-        error: "Unlock admin access before loading saved events.",
+        error: "Sign in and unlock admin access before loading saved events.",
         events: [],
         status: "error",
       });
@@ -126,7 +140,8 @@ export function EventAdminPage() {
       const response = await withAdminTimeout(
         fetch("/api/admin/events", {
           headers: {
-            Authorization: `Bearer ${adminToken}`,
+            Authorization: `Bearer ${authToken}`,
+            "X-Admin-Access-Token": adminToken,
           },
         }),
         9000,
@@ -175,7 +190,35 @@ export function EventAdminPage() {
     let isActive = true;
     let loadTimer: number | null = null;
 
-    Promise.resolve().then(() => {
+    Promise.resolve().then(async () => {
+      const session = await getCurrentAdminSession();
+
+      if (!isActive) {
+        return;
+      }
+
+      if (!session.signedIn) {
+        setAdminAuth({
+          accessToken: "",
+          email: "",
+          message: "Sign in with Supabase Auth before managing events.",
+          status: "signed_out",
+        });
+        setAdminAccess({
+          message: "Admin access waits until you sign in.",
+          status: "locked",
+          token: "",
+        });
+        return;
+      }
+
+      setAdminAuth({
+        accessToken: session.accessToken,
+        email: session.email,
+        message: `Signed in as ${session.email || "admin user"}.`,
+        status: "signed_in",
+      });
+
       const adminToken = readStoredAdminAccessToken();
 
       if (!isActive) {
@@ -198,7 +241,7 @@ export function EventAdminPage() {
       });
 
       loadTimer = window.setTimeout(() => {
-        void loadEvents(adminToken);
+        void loadEvents(session.accessToken, adminToken);
       }, 0);
     });
 
@@ -249,7 +292,7 @@ export function EventAdminPage() {
         message: "Admin access verified.",
         status: "verified",
       });
-      await loadEvents(payload.token);
+      await loadEvents(adminAuth.accessToken, payload.token);
     } catch {
       setAdminAccessAttempt({
         message: "Admin access check failed. Try again.",
@@ -272,9 +315,14 @@ export function EventAdminPage() {
     });
   }
 
+  if (adminAuth.status !== "signed_in") {
+    return <AdminAuthGate authState={adminAuth} />;
+  }
+
   if (adminAccess.status !== "verified") {
     return (
       <AdminAccessGate
+        authState={adminAuth}
         accessState={adminAccess}
         attemptState={adminAccessAttempt}
         onSubmit={(adminCode) => void verifyAdminAccess(adminCode)}
@@ -303,6 +351,9 @@ export function EventAdminPage() {
               </h1>
             </div>
             <div className="flex flex-wrap gap-2">
+              <PreviewLink href="/admin/logout" tone="ghost">
+                Sign Out
+              </PreviewLink>
               <MockButton onClick={clearAdminAccess} tone="danger">
                 Clear Admin Access
               </MockButton>
@@ -332,7 +383,9 @@ export function EventAdminPage() {
                 </div>
                 <MockButton
                   disabled={loadState.status === "loading"}
-                  onClick={() => void loadEvents(adminAccess.token)}
+                  onClick={() =>
+                    void loadEvents(adminAuth.accessToken, adminAccess.token)
+                  }
                   tone="ghost"
                 >
                   {loadState.status === "loading" ? "Refreshing..." : "Refresh Events"}
@@ -360,6 +413,7 @@ export function EventAdminPage() {
               <div className="mt-5 grid gap-4">
                 {loadState.events.map((event) => (
                   <AdminEventCard
+                    adminAuthToken={adminAuth.accessToken}
                     adminAccessToken={adminAccess.token}
                     event={event}
                     key={event.id}
@@ -368,7 +422,7 @@ export function EventAdminPage() {
                         message: `${deletedEvent.eventName} was deleted. Refreshing saved events...`,
                         status: "success",
                       });
-                      void loadEvents(adminAccess.token);
+                      void loadEvents(adminAuth.accessToken, adminAccess.token);
                     }}
                   />
                 ))}
@@ -392,13 +446,13 @@ export function EventAdminPage() {
             <Panel className="p-4">
               <Pill tone="rose">MVP warning</Pill>
               <h2 className="mt-4 text-xl font-bold text-white">
-                Admin uses temporary access
+                Admin is partially hardened
               </h2>
               <p className="mt-3 text-sm leading-6 text-zinc-400">
-                This dashboard now requires `ADMIN_ACCESS_CODE`, but it still
-                uses temporary MVP Supabase policies. Keep it private for
-                testing. Protect this route with Supabase Auth before
-                production.
+                This dashboard requires Supabase Auth plus `ADMIN_ACCESS_CODE`,
+                but database policies are still being tightened in stages. Keep
+                it private for testing until the Phase 2 SQL is applied and
+                reviewed.
               </p>
             </Panel>
 
@@ -441,11 +495,58 @@ export function EventAdminPage() {
   );
 }
 
+function AdminAuthGate({ authState }: { authState: AdminAuthState }) {
+  const isChecking = authState.status === "checking";
+
+  return (
+    <main className="relative min-h-screen overflow-hidden text-white">
+      <AmbientMusicBackground density="calm" />
+      <div className="mx-auto flex min-h-screen w-full max-w-3xl items-center px-5 py-10 sm:px-8">
+        <Panel className="w-full p-6">
+          <Link
+            className="text-sm font-semibold text-zinc-400 transition hover:text-white"
+            href="/"
+          >
+            Back to landing
+          </Link>
+          <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold uppercase text-[#43d9cf]">
+                Supabase Auth
+              </p>
+              <h1 className="mt-2 text-3xl font-black text-white">
+                Sign in for organizer access
+              </h1>
+            </div>
+            <Pill tone={isChecking ? "gold" : "rose"}>
+              {isChecking ? "Checking" : "Sign in required"}
+            </Pill>
+          </div>
+          <p className="mt-4 text-sm leading-6 text-zinc-400">
+            {authState.message} Guests do not need accounts; this is only for
+            organizer/admin tools.
+          </p>
+          <div className="mt-6 flex flex-wrap gap-2">
+            <PreviewLink href="/admin/login" tone="primary">
+              Admin Login
+            </PreviewLink>
+            <PreviewLink href="/debug/deployment" tone="ghost">
+              Deployment Check
+            </PreviewLink>
+          </div>
+        </Panel>
+      </div>
+    </main>
+  );
+}
+
 function AdminAccessGate({
+  authState,
   accessState,
   attemptState,
   onSubmit,
 }: {
+  authState: AdminAuthState;
   accessState: AdminAccessState;
   attemptState: AdminAccessAttemptState;
   onSubmit: (adminCode: string) => void;
@@ -478,8 +579,8 @@ function AdminAccessGate({
           </div>
           <p className="mt-4 text-sm leading-6 text-zinc-400">
             {accessState.message} This private beta gate uses the server-only
-            `ADMIN_ACCESS_CODE`. It should be replaced with Supabase Auth before
-            public launch.
+            `ADMIN_ACCESS_CODE` as a second layer after Supabase Auth. Signed in
+            as {authState.email || "an organizer"}.
           </p>
 
           <form
@@ -530,10 +631,12 @@ function AdminAccessGate({
 
 function AdminEventCard({
   adminAccessToken,
+  adminAuthToken,
   event,
   onDeleted,
 }: {
   adminAccessToken: string;
+  adminAuthToken: string;
   event: BattleEvent;
   onDeleted: (event: BattleEvent) => void;
 }) {
@@ -571,8 +674,9 @@ function AdminEventCard({
           confirmationSlug,
         }),
         headers: {
-          Authorization: `Bearer ${adminAccessToken}`,
+          Authorization: `Bearer ${adminAuthToken}`,
           "Content-Type": "application/json",
+          "X-Admin-Access-Token": adminAccessToken,
         },
         method: "DELETE",
       },
@@ -698,8 +802,9 @@ function AdminEventCard({
             </label>
             <div className="mt-4 grid gap-2 sm:grid-cols-[1fr_auto] sm:items-center">
               <p className="text-xs leading-5 text-[#ffe2e8]">
-                TODO: protect this admin-only action with Supabase Auth before
-                public launch.
+                Phase 2 note: this admin action now requires Supabase Auth plus
+                the admin code, but the route must remain private until RLS is
+                fully reviewed.
               </p>
               <MockButton
                 disabled={!confirmationMatches || isDeleting}

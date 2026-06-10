@@ -1,8 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
-import {
-  extractBearerToken,
-  verifyAdminAccessToken,
-} from "@/lib/security/server-tokens";
+import { verifyAdminAccessToken } from "@/lib/security/server-tokens";
+import { verifySupabaseAdminUser } from "@/lib/security/server-auth";
 import { validateEventSlug } from "@/lib/security/validation";
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
 
@@ -17,7 +15,20 @@ export async function DELETE(
   request: NextRequest,
   context: RouteContext<"/api/admin/events/[eventSlug]">,
 ) {
-  const adminAccess = verifyAdminAccessToken(extractBearerToken(request));
+  const adminUser = await verifySupabaseAdminUser(request);
+
+  if (!adminUser.verified) {
+    return NextResponse.json(
+      {
+        message: adminUser.error,
+      },
+      { status: 401 },
+    );
+  }
+
+  const adminAccess = verifyAdminAccessToken(
+    request.headers.get("x-admin-access-token"),
+  );
 
   if (!adminAccess.verified) {
     return NextResponse.json(
@@ -63,7 +74,7 @@ export async function DELETE(
   }
 
   try {
-    const supabase = createSupabaseServerClient();
+    const supabase = createSupabaseServerClient(adminUser.accessToken);
     const { data: eventData, error: lookupError } = await supabase
       .from("events")
       .select("id,event_slug")

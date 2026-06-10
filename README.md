@@ -6,7 +6,8 @@ Private host-controlled music battle MVP with local CSV setup, Supabase-backed
 events, passcode access, realtime voting, realtime chat/moderation, and
 persisted host/guest/results routes. The deployed MVP also supports an optional
 Daily-powered in-app audio room so a host can share browser-tab audio without
-uploading or storing music files.
+uploading or storing music files. Organizer/admin access uses Supabase Auth
+magic links plus a private `ADMIN_ACCESS_CODE` gate for the current beta.
 
 For deployment setup, environment variables, Supabase Realtime reminders, Daily
 audio setup, and Vercel smoke-test steps, see [DEPLOYMENT.md](./DEPLOYMENT.md).
@@ -28,7 +29,7 @@ bun dev
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
 Local environment variables live in `.env.local`. Supabase is required for the
-persisted MVP routes. Daily is optional:
+persisted MVP routes and Supabase Auth admin login. Daily is optional:
 
 ```bash
 NEXT_PUBLIC_SUPABASE_URL=your-supabase-project-url
@@ -42,6 +43,18 @@ NEXT_PUBLIC_DAILY_DOMAIN=your-team.daily.co
 If `DAILY_API_KEY` is missing, the app keeps working and shows External Audio
 Mode as the fallback. Never expose `ADMIN_ACCESS_CODE`, `DAILY_API_KEY`,
 Supabase service role keys, or other private secrets in browser code.
+
+For Supabase Auth, configure email magic links and add these redirect URLs in
+the Supabase dashboard:
+
+- `http://localhost:3000/admin/callback`
+- `https://your-vercel-domain.vercel.app/admin/callback`
+- Any custom production domain callback, such as
+  `https://your-domain.com/admin/callback`
+
+Run `supabase/security_phase_2.sql` manually in the Supabase SQL Editor after
+reviewing it. It adds event ownership and staged RLS policies without removing
+the older MVP guest policies automatically.
 
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 

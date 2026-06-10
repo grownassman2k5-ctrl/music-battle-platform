@@ -1,5 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
 import {
+  checkRateLimit,
+  getRateLimitKey,
+} from "@/lib/security/rate-limit";
+import {
   createEventAccessToken,
   hashPasscode,
   timingSafeStringEqual,
@@ -30,6 +34,22 @@ type EventAccessRow = {
 };
 
 export async function POST(request: NextRequest) {
+  const rateLimit = checkRateLimit({
+    key: getRateLimitKey(request, "event-access"),
+    limit: 15,
+    windowMs: 10 * 60 * 1000,
+  });
+
+  if (!rateLimit.allowed) {
+    return NextResponse.json(
+      {
+        message: `Too many passcode attempts. Try again in ${rateLimit.retryAfterSeconds} seconds.`,
+        verified: false,
+      },
+      { status: 429 },
+    );
+  }
+
   let body: EventAccessRequest;
 
   try {

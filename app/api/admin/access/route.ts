@@ -1,5 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
 import {
+  checkRateLimit,
+  getRateLimitKey,
+} from "@/lib/security/rate-limit";
+import {
   createAdminAccessToken,
   getAdminAccessConfigured,
   timingSafeStringEqual,
@@ -22,6 +26,22 @@ export function GET() {
 }
 
 export async function POST(request: NextRequest) {
+  const rateLimit = checkRateLimit({
+    key: getRateLimitKey(request, "admin-access"),
+    limit: 8,
+    windowMs: 10 * 60 * 1000,
+  });
+
+  if (!rateLimit.allowed) {
+    return NextResponse.json(
+      {
+        message: `Too many admin access attempts. Try again in ${rateLimit.retryAfterSeconds} seconds.`,
+        verified: false,
+      },
+      { status: 429 },
+    );
+  }
+
   if (!getAdminAccessConfigured()) {
     return NextResponse.json(
       {

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   type ImportedSong,
   type MatchupMode,
@@ -15,13 +15,7 @@ import {
   saveLocalBattleSetup,
   type LocalSideDisplayConfig,
 } from "@/lib/local-demo-store";
-import { hashEventPasscode } from "@/lib/persisted-event-access";
-import {
-  createEvent,
-  createEventSides,
-  saveGeneratedRounds,
-  saveImportedSongs,
-} from "@/lib/supabase/battle-repository";
+import { getCurrentAdminSession } from "@/lib/admin-auth";
 import {
   validateEventName,
   validatePasscode,
@@ -57,6 +51,13 @@ type SideDisplayOverrides = Record<
 
 type SupabaseSaveStatus = "idle" | "saving" | "success" | "error";
 
+type OrganizerAuthState = {
+  accessToken: string;
+  email: string;
+  message: string;
+  status: "checking" | "signed_out" | "signed_in";
+};
+
 export function HostSetupPage() {
   const router = useRouter();
   const [eventName, setEventName] = useState(
@@ -74,6 +75,12 @@ export function HostSetupPage() {
   const [supabaseEventSlug, setSupabaseEventSlug] = useState("");
   const [sideDisplayOverrides, setSideDisplayOverrides] =
     useState<SideDisplayOverrides>({});
+  const [organizerAuth, setOrganizerAuth] = useState<OrganizerAuthState>({
+    accessToken: "",
+    email: "",
+    message: "Checking organizer sign-in...",
+    status: "checking",
+  });
 
   const importResult = useMemo(
     () => validateCsvImport(csvText, matchupMode),
@@ -83,6 +90,44 @@ export function HostSetupPage() {
     csvText.trim().length > 0 &&
     importResult.errors.length === 0 &&
     importResult.matchups.length > 0;
+  const canSaveToSupabase =
+    canGenerate &&
+    organizerAuth.status === "signed_in" &&
+    supabaseSaveStatus !== "saving";
+
+  useEffect(() => {
+    let isActive = true;
+
+    Promise.resolve().then(async () => {
+      const session = await getCurrentAdminSession();
+
+      if (!isActive) {
+        return;
+      }
+
+      if (!session.signedIn) {
+        setOrganizerAuth({
+          accessToken: "",
+          email: "",
+          message:
+            "Sign in with Supabase Auth before saving new persisted events.",
+          status: "signed_out",
+        });
+        return;
+      }
+
+      setOrganizerAuth({
+        accessToken: session.accessToken,
+        email: session.email,
+        message: `Signed in as ${session.email || "organizer"}.`,
+        status: "signed_in",
+      });
+    });
+
+    return () => {
+      isActive = false;
+    };
+  }, []);
 
   const sideDisplayConfigs = useMemo(
     () =>
@@ -188,6 +233,14 @@ export function HostSetupPage() {
       return;
     }
 
+    if (organizerAuth.status !== "signed_in") {
+      setSupabaseSaveStatus("error");
+      setSupabaseSaveMessage(
+        "Sign in as an organizer before saving this battle to Supabase.",
+      );
+      return;
+    }
+
     const eventNameValidation = validateEventName(eventName);
     const passcodeValidation = validatePasscode(eventPasscode);
 
@@ -209,129 +262,77 @@ export function HostSetupPage() {
 
     try {
       const eventSlug = createEventSlug(eventNameValidation.value);
-      const passcodeHash = await hashEventPasscode(passcodeValidation.value);
-      const eventResult = await createEvent({
-        eventName: eventNameValidation.value,
-        eventSlug,
-        passcodeHash,
-        hostDisplayName: "Host",
-        matchupMode,
-        defaultSongDurationSeconds: defaultDuration || 120,
-      });
-
-      if (eventResult.error || !eventResult.data) {
-        throw new Error(eventResult.error ?? "Supabase did not return an event.");
-      }
-
-      const savedEvent = eventResult.data;
-      const sideResult = await createEventSides(
-        savedEvent.id,
-        sideDisplayConfigs.map((config, index) => ({
-          internalSideValue: config.csvValue.trim() || config.sourceCsvValue,
-          publicDisplayName:
-            config.publicDisplayName.trim() || `Side ${index + 1}`,
-          artistDisplayName:
-            config.artistDisplayName.trim() ||
-            config.publicDisplayName.trim() ||
-            `Side ${index + 1}`,
-          displayOrder: index === 0 ? 1 : 2,
-        })),
+      const sideDisplayOrderBySource = new Map(
+        sideDisplayConfigs.map((config, index) => [
+          config.sourceCsvValue,
+          index === 0 ? 1 : 2,
+        ]),
       );
-
-      if (sideResult.error || !sideResult.data) {
-        throw new Error(
-          sideResult.error ?? "Supabase did not return saved event sides.",
-        );
-      }
-
-      const sideBySourceValue = new Map(
-        sideDisplayConfigs.map((config, index) => {
-          const savedSide = sideResult.data.find(
-            (side) => side.displayOrder === (index === 0 ? 1 : 2),
-          );
-
-          if (!savedSide) {
-            throw new Error(
-              `Supabase did not return a saved side for ${config.sourceCsvValue}.`,
-            );
-          }
-
-          return [config.sourceCsvValue, savedSide] as const;
-        }),
-      );
-
-      const songsResult = await saveImportedSongs(
-        savedEvent.id,
-        importResult.songs.map((song) => {
-          const side = sideBySourceValue.get(song.side);
-
-          if (!side) {
-            throw new Error(`No saved side matched CSV value "${song.side}".`);
-          }
-
-          return {
-            sideId: side.id,
-            csvRowNumber: song.rowNumber,
-            artist: song.artist,
-            songTitle: song.songTitle,
-            album: song.album || null,
-            genre: song.genre || null,
-            durationSeconds: song.durationSeconds,
-            releaseYear: parseOptionalYear(song.year),
-            mood: song.mood || null,
-            fixedOrder: song.fixedOrder,
-            appleMusicLink: song.appleMusicLink || null,
-          };
-        }),
-      );
-
-      if (songsResult.error || !songsResult.data) {
-        throw new Error(
-          songsResult.error ?? "Supabase did not return saved songs.",
-        );
-      }
-
-      const songByCsvRow = new Map(
-        songsResult.data.map((song) => [song.csvRowNumber, song]),
-      );
-      const roundsResult = await saveGeneratedRounds(
-        savedEvent.id,
-        importResult.matchups.map((matchup) => {
-          const sideOne = sideBySourceValue.get(matchup.sideOne.side);
-          const sideTwo = sideBySourceValue.get(matchup.sideTwo.side);
-          const sideOneSong = songByCsvRow.get(matchup.sideOne.rowNumber);
-          const sideTwoSong = songByCsvRow.get(matchup.sideTwo.rowNumber);
-
-          if (!sideOne || !sideTwo || !sideOneSong || !sideTwoSong) {
-            throw new Error(
-              `Round ${matchup.roundNumber} could not be mapped to saved Supabase rows.`,
-            );
-          }
-
-          return {
+      const response = await fetch("/api/admin/events", {
+        body: JSON.stringify({
+          defaultSongDurationSeconds: defaultDuration || 120,
+          eventName: eventNameValidation.value,
+          eventSlug,
+          hostDisplayName: "Host",
+          matchupMode,
+          passcode: passcodeValidation.value,
+          rounds: importResult.matchups.map((matchup) => ({
             roundNumber: matchup.roundNumber,
+            sideOneDisplayOrder:
+              sideDisplayOrderBySource.get(matchup.sideOne.side) ?? 1,
+            sideOneSongCsvRow: matchup.sideOne.rowNumber,
+            sideTwoDisplayOrder:
+              sideDisplayOrderBySource.get(matchup.sideTwo.side) ?? 2,
+            sideTwoSongCsvRow: matchup.sideTwo.rowNumber,
             themeLabel: getMatchupThemeLabel(
               matchup.sideOne.mood,
               matchup.sideTwo.mood,
             ),
-            sideOneId: sideOne.id,
-            sideTwoId: sideTwo.id,
-            sideOneSongId: sideOneSong.id,
-            sideTwoSongId: sideTwoSong.id,
-          };
+          })),
+          sides: sideDisplayConfigs.map((config, index) => ({
+            artistDisplayName:
+              config.artistDisplayName.trim() ||
+              config.publicDisplayName.trim() ||
+              `Side ${index + 1}`,
+            displayOrder: index === 0 ? 1 : 2,
+            internalSideValue: config.csvValue.trim() || config.sourceCsvValue,
+            publicDisplayName:
+              config.publicDisplayName.trim() || `Side ${index + 1}`,
+          })),
+          songs: importResult.songs.map((song) => ({
+            album: song.album || null,
+            appleMusicLink: song.appleMusicLink || null,
+            artist: song.artist,
+            csvRowNumber: song.rowNumber,
+            durationSeconds: song.durationSeconds,
+            fixedOrder: song.fixedOrder,
+            genre: song.genre || null,
+            mood: song.mood || null,
+            releaseYear: parseOptionalYear(song.year),
+            sideDisplayOrder: sideDisplayOrderBySource.get(song.side) ?? 1,
+            songTitle: song.songTitle,
+          })),
         }),
-      );
+        headers: {
+          Authorization: `Bearer ${organizerAuth.accessToken}`,
+          "Content-Type": "application/json",
+        },
+        method: "POST",
+      });
+      const payload = (await response.json()) as Partial<{
+        event: { eventSlug: string };
+        message: string;
+        roundCount: number;
+      }>;
 
-      if (roundsResult.error || !roundsResult.data) {
-        throw new Error(
-          roundsResult.error ?? "Supabase did not return saved rounds.",
-        );
+      if (!response.ok || !payload.event?.eventSlug) {
+        throw new Error(payload.message ?? "Supabase did not save the event.");
       }
 
-      setSupabaseEventSlug(eventSlug);
+      setSupabaseEventSlug(payload.event.eventSlug);
       setSupabaseSaveStatus("success");
       setSupabaseSaveMessage(
-        `Saved ${eventName || "Untitled Event"} to Supabase with ${roundsResult.data.length} rounds.`,
+        `Saved ${eventName || "Untitled Event"} to Supabase with ${payload.roundCount ?? importResult.matchups.length} rounds.`,
       );
     } catch (error) {
       setSupabaseSaveStatus("error");
@@ -365,7 +366,7 @@ export function HostSetupPage() {
               </h1>
             </div>
             <div className="flex flex-wrap gap-2">
-              <Pill tone="gold">Local only</Pill>
+              <Pill tone="gold">Local demo + Supabase</Pill>
               <MockButton onClick={handleResetDemoData} tone="ghost">
                 Reset Demo Data
               </MockButton>
@@ -378,6 +379,47 @@ export function HostSetupPage() {
 
         <section className="grid gap-5 py-6 xl:grid-cols-[24rem_minmax(0,1fr)]">
           <div className="space-y-5">
+            <Panel className="p-5">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold uppercase text-zinc-500">
+                    Organizer sign-in
+                  </p>
+                  <h2 className="mt-2 text-xl font-black text-white">
+                    Supabase save access
+                  </h2>
+                </div>
+                <Pill
+                  tone={
+                    organizerAuth.status === "signed_in"
+                      ? "cyan"
+                      : organizerAuth.status === "checking"
+                        ? "gold"
+                        : "rose"
+                  }
+                >
+                  {organizerAuth.status === "signed_in"
+                    ? "Signed in"
+                    : organizerAuth.status === "checking"
+                      ? "Checking"
+                      : "Required"}
+                </Pill>
+              </div>
+              <p className="mt-3 text-sm leading-6 text-zinc-400">
+                {organizerAuth.message} Local demo generation still works
+                without admin sign-in.
+              </p>
+              {organizerAuth.status !== "signed_in" ? (
+                <PreviewLink className="mt-4 w-full" href="/admin/login" tone="primary">
+                  Admin Login
+                </PreviewLink>
+              ) : (
+                <PreviewLink className="mt-4 w-full" href="/admin/logout" tone="ghost">
+                  Sign Out
+                </PreviewLink>
+              )}
+            </Panel>
+
             <Panel className="p-5">
               <p className="text-sm font-semibold uppercase text-zinc-500">
                 Event basics
@@ -702,12 +744,14 @@ export function HostSetupPage() {
                   Generate Battle Demo
                 </MockButton>
                 <MockButton
-                  disabled={!canGenerate || supabaseSaveStatus === "saving"}
+                  disabled={!canSaveToSupabase}
                   onClick={handleSaveToSupabase}
                   tone="secondary"
                 >
                   {supabaseSaveStatus === "saving"
                     ? "Saving..."
+                    : organizerAuth.status !== "signed_in"
+                      ? "Sign In to Save"
                     : "Save Battle to Supabase"}
                 </MockButton>
               </div>

@@ -24,8 +24,6 @@ import {
   joinEventAsParticipant,
   loadPersistedBattleBySlug,
   submitOrUpdateVote,
-  updateEventState,
-  updateRoundState,
   type PersistedBattle,
   type RoundVoteTotals,
 } from "@/lib/supabase/battle-repository";
@@ -692,6 +690,107 @@ function useGuestParticipant(eventId: string) {
   };
 }
 
+type HostEventStateInput = {
+  completedAt?: string | null;
+  currentRoundNumber?: number | null;
+  eventId: string;
+  eventSlug: string;
+  startedAt?: string | null;
+  status?: EventStatus;
+};
+
+type HostRoundStateInput = {
+  eventId: string;
+  eventSlug: string;
+  revealedAt?: string | null;
+  roundId: string;
+  sideOneVoteCount?: number;
+  sideTwoVoteCount?: number;
+  startedAt?: string | null;
+  status?: RoundStatus;
+  votingClosedAt?: string | null;
+  votingOpenedAt?: string | null;
+  winnerSideId?: string | null;
+  winnerSongId?: string | null;
+};
+
+async function updateHostEventState(input: HostEventStateInput) {
+  return saveHostState({
+    eventId: input.eventId,
+    eventPatch: {
+      completedAt: input.completedAt,
+      currentRoundNumber: input.currentRoundNumber,
+      startedAt: input.startedAt,
+      status: input.status,
+    },
+    eventSlug: input.eventSlug,
+    target: "event",
+  });
+}
+
+async function updateHostRoundState(input: HostRoundStateInput) {
+  return saveHostState({
+    eventId: input.eventId,
+    eventSlug: input.eventSlug,
+    roundPatch: {
+      revealedAt: input.revealedAt,
+      roundId: input.roundId,
+      sideOneVoteCount: input.sideOneVoteCount,
+      sideTwoVoteCount: input.sideTwoVoteCount,
+      startedAt: input.startedAt,
+      status: input.status,
+      votingClosedAt: input.votingClosedAt,
+      votingOpenedAt: input.votingOpenedAt,
+      winnerSideId: input.winnerSideId,
+      winnerSongId: input.winnerSongId,
+    },
+    target: "round",
+  });
+}
+
+async function saveHostState(body: {
+  eventId: string;
+  eventPatch?: Omit<HostEventStateInput, "eventId" | "eventSlug">;
+  eventSlug: string;
+  roundPatch?: Omit<HostRoundStateInput, "eventId" | "eventSlug">;
+  target: "event" | "round";
+}) {
+  const accessToken = readPersistedEventAccess(body.eventId, "host")?.accessToken;
+
+  if (!accessToken) {
+    return {
+      error: "Host access expired. Enter the event passcode again.",
+    };
+  }
+
+  try {
+    const response = await fetch("/api/event-access/host-state", {
+      body: JSON.stringify(body),
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      method: "POST",
+    });
+    const payload = (await response.json()) as Partial<{ message: string }>;
+
+    if (!response.ok) {
+      return {
+        error: payload.message ?? "Host control update failed.",
+      };
+    }
+
+    return {
+      error: null,
+    };
+  } catch (error) {
+    return {
+      error:
+        error instanceof Error ? error.message : "Host control update failed.",
+    };
+  }
+}
+
 function PersistedHostExperience({
   battle,
   eventSlug,
@@ -906,8 +1005,9 @@ function PersistedHostExperience({
     }
 
     const now = new Date().toISOString();
-    const eventResult = await updateEventState({
+    const eventResult = await updateHostEventState({
       eventId: battle.event.id,
+      eventSlug,
       status: "live",
       currentRoundNumber: currentRound.round.roundNumber,
       startedAt: battle.event.startedAt ?? now,
@@ -918,8 +1018,9 @@ function PersistedHostExperience({
     }
 
     if (currentRound.round.status === "queued") {
-      const roundResult = await updateRoundState({
+      const roundResult = await updateHostRoundState({
         eventId: battle.event.id,
+        eventSlug,
         roundId: currentRound.round.id,
         status: "active",
       });
@@ -936,8 +1037,9 @@ function PersistedHostExperience({
     }
 
     const now = new Date().toISOString();
-    const eventResult = await updateEventState({
+    const eventResult = await updateHostEventState({
       eventId: battle.event.id,
+      eventSlug,
       status: "live",
       currentRoundNumber: currentRound.round.roundNumber,
       startedAt: battle.event.startedAt ?? now,
@@ -947,8 +1049,9 @@ function PersistedHostExperience({
       return eventResult.error;
     }
 
-    const roundResult = await updateRoundState({
+    const roundResult = await updateHostRoundState({
       eventId: battle.event.id,
+      eventSlug,
       roundId: currentRound.round.id,
       status: "playing",
       startedAt: currentRound.round.startedAt ?? now,
@@ -962,8 +1065,9 @@ function PersistedHostExperience({
       return "No current round is available for voting.";
     }
 
-    const roundResult = await updateRoundState({
+    const roundResult = await updateHostRoundState({
       eventId: battle.event.id,
+      eventSlug,
       roundId: currentRound.round.id,
       status: "voting_open",
       votingOpenedAt: new Date().toISOString(),
@@ -983,8 +1087,9 @@ function PersistedHostExperience({
       return voteTotalsResult.error;
     }
 
-    const roundResult = await updateRoundState({
+    const roundResult = await updateHostRoundState({
       eventId: battle.event.id,
+      eventSlug,
       roundId: currentRound.round.id,
       status: "voting_closed",
       sideOneVoteCount: voteTotalsResult.totals.sideOne,
@@ -1016,8 +1121,9 @@ function PersistedHostExperience({
       return "Vote totals are tied. Choose a winner before revealing.";
     }
 
-    const roundResult = await updateRoundState({
+    const roundResult = await updateHostRoundState({
       eventId: battle.event.id,
+      eventSlug,
       roundId: currentRound.round.id,
       status: "revealed",
       winnerSideId: winner.side.id,
@@ -1038,8 +1144,9 @@ function PersistedHostExperience({
     const now = new Date().toISOString();
 
     if (!nextRound) {
-      const eventResult = await updateEventState({
+      const eventResult = await updateHostEventState({
         eventId: battle.event.id,
+        eventSlug,
         status: "completed",
         currentRoundNumber: currentRound.round.roundNumber,
         completedAt: battle.event.completedAt ?? now,
@@ -1048,8 +1155,9 @@ function PersistedHostExperience({
       return eventResult.error;
     }
 
-    const eventResult = await updateEventState({
+    const eventResult = await updateHostEventState({
       eventId: battle.event.id,
+      eventSlug,
       status: "live",
       currentRoundNumber: nextRound.round.roundNumber,
     });
@@ -1058,8 +1166,9 @@ function PersistedHostExperience({
       return eventResult.error;
     }
 
-    const roundResult = await updateRoundState({
+    const roundResult = await updateHostRoundState({
       eventId: battle.event.id,
+      eventSlug,
       roundId: nextRound.round.id,
       status: "active",
     });

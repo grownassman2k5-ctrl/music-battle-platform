@@ -5,6 +5,10 @@ import {
   type DailyAudioRole,
 } from "@/lib/daily/audio-room";
 import {
+  checkRateLimit,
+  getRateLimitKey,
+} from "@/lib/security/rate-limit";
+import {
   verifyEventAccessToken,
   type EventAccessRole,
 } from "@/lib/security/server-tokens";
@@ -35,6 +39,22 @@ export function GET() {
 }
 
 export async function POST(request: NextRequest) {
+  const rateLimit = checkRateLimit({
+    key: getRateLimitKey(request, "daily-audio"),
+    limit: 30,
+    windowMs: 10 * 60 * 1000,
+  });
+
+  if (!rateLimit.allowed) {
+    return NextResponse.json(
+      {
+        configured: true,
+        message: `Too many audio room requests. Try again in ${rateLimit.retryAfterSeconds} seconds.`,
+      },
+      { status: 429 },
+    );
+  }
+
   const configStatus = getDailyAudioConfigStatus();
 
   if (!configStatus.configured) {

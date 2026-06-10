@@ -1,8 +1,8 @@
 # Deployment Readiness
 
 This app is ready for private MVP testing on Vercel once the Supabase
-environment variables, Supabase Realtime settings, and optional Daily audio
-settings are configured.
+environment variables, Supabase Auth redirects, Supabase Realtime settings, and
+optional Daily audio settings are configured.
 
 ## Required Environment Variables
 
@@ -38,27 +38,55 @@ Do not expose `ADMIN_ACCESS_CODE`, `DAILY_API_KEY`, service role keys, or any
 other private secret in browser code. Only safe public values should use
 `NEXT_PUBLIC_`.
 
+## Supabase Auth Setup
+
+Organizer/admin pages now use Supabase Auth magic links.
+
+In the Supabase dashboard:
+
+1. Go to Authentication > Providers.
+2. Enable Email auth and confirm magic links/OTP are allowed.
+3. Go to Authentication > URL Configuration.
+4. Set the local Site URL while developing:
+   `http://localhost:3000`.
+5. Add redirect URLs:
+   - `http://localhost:3000/admin/callback`
+   - `https://your-vercel-domain.vercel.app/admin/callback`
+   - Any custom production domain callback, such as
+     `https://your-domain.com/admin/callback`
+6. Invite or create the organizer email you plan to use, depending on your
+   Supabase Auth settings.
+
+No new environment variable is required for Supabase Auth. It uses the existing
+`NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`.
+
 ## Private Beta Security Checklist
 
 - `.env.local` is ignored by Git and should stay local.
-- `ADMIN_ACCESS_CODE` is required before `/admin/events` can list or delete
+- Supabase Auth is required before organizer pages can manage saved events.
+- `ADMIN_ACCESS_CODE` is also required before `/admin/events` can list or delete
   saved events.
 - Event passcodes are verified by a server route; normal browser event loads do
   not receive `passcode_hash`.
 - Daily audio token creation requires the browser to have verified host or
   guest event access first.
-- The app still uses temporary MVP Supabase RLS policies. Do not treat this as
-  production-grade access control until Supabase Auth and tighter RLS are added.
+- The app still uses temporary MVP Supabase RLS policies until the Phase 2 SQL
+  is applied and broad policies are reviewed. Do not treat this as
+  production-grade access control yet.
 
 ## Supabase Checks
 
 Before a family or friends live test, confirm:
 
 - `supabase/schema.sql` has been run in the Supabase SQL Editor.
+- `supabase/security_phase_2.sql` has been reviewed and run in the Supabase SQL
+  Editor.
 - Tables exist: `events`, `event_sides`, `songs`, `rounds`, `participants`,
   `votes`, `chat_messages`, and `moderation_actions`.
+- New events created after Phase 2 have `events.owner_user_id` populated.
 - Realtime is enabled for `events`, `rounds`, `votes`, and `chat_messages`.
-- Temporary MVP RLS policies are present.
+- Temporary MVP guest RLS policies are present until guest voting/chat writes
+  move server-side in a later phase.
 
 Use these local/debug pages:
 
@@ -113,21 +141,24 @@ After deploying:
 1. Open `/debug/deployment` and confirm public env variables are present.
 2. Confirm `ADMIN_ACCESS_CODE` is configured.
 3. Confirm the expected Supabase tables are reachable.
-4. Open `/admin/events`, enter the admin code, and confirm saved events load.
-5. Open `/host/setup` and save a small test event to Supabase.
-6. Open `/host/[eventSlug]`, `/event/[eventSlug]`, and `/results/[eventSlug]`.
-7. Test passcode entry, guest join, realtime voting, realtime chat, moderation,
+4. Open `/admin/login` and sign in with the organizer email.
+5. Open `/admin/events`, enter the admin code, and confirm saved events load.
+6. Open `/host/setup` while signed in and save a small test event to Supabase.
+7. Open `/host/[eventSlug]`, `/event/[eventSlug]`, and `/results/[eventSlug]`.
+8. Test passcode entry, guest join, realtime voting, realtime chat, moderation,
    winner reveal, and results.
-8. Optional: test Daily in-app audio from a desktop Chrome or Edge host browser.
+9. Optional: test Daily in-app audio from a desktop Chrome or Edge host browser.
 
 ## Current MVP Limitations
 
-- Supabase Auth is not added yet.
-- RLS policies are development-friendly and need tightening before public use.
+- Supabase Auth covers organizer/admin access, but host/co-host/moderator roles
+  are not fully modeled yet.
+- RLS policies are still staged and need final tightening before public use.
 - Host timer state is client-side only.
-- Host round controls, voting, chat, and moderation still use browser Supabase
-  writes under MVP policies.
+- Guest voting, chat, and moderation still use browser Supabase writes under MVP
+  policies. Host round controls now go through a server route using the signed
+  host access marker.
 - External audio is still the safest fallback even when Daily in-app audio is
   configured.
-- Admin and event access use temporary signed local browser markers. Replace
-  them with Supabase Auth/server-side role checks before public launch.
+- Event guest/host access uses temporary signed local browser markers. Replace
+  them with server-side sessions or stronger RPC checks before public launch.

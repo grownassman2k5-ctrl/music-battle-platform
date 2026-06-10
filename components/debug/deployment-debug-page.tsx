@@ -15,6 +15,8 @@ const realtimeTables = ["events", "rounds", "votes", "chat_messages"];
 
 const demoRoutes = ["/", "/host/setup", "/host/demo", "/event/demo", "/results/demo"];
 
+const adminRoutes = ["/admin/login", "/admin/callback", "/admin/logout", "/admin/events"];
+
 const persistedRoutes = [
   "/host/[eventSlug]",
   "/event/[eventSlug]",
@@ -75,6 +77,20 @@ export function DeploymentDebugPage() {
           "Manual Supabase dashboard check: enable Realtime for events, rounds, votes, and chat_messages.",
         isReady: false,
         label: "Realtime enabled for live tables",
+        manual: true,
+      },
+      {
+        detail:
+          "Manual Supabase Auth check: email magic links enabled and /admin/callback added for localhost and Vercel domains.",
+        isReady: false,
+        label: "Supabase Auth redirects configured",
+        manual: true,
+      },
+      {
+        detail:
+          "Manual SQL check: run supabase/security_phase_2.sql after reviewing owner-user and staged RLS policies.",
+        isReady: false,
+        label: "Security Phase 2 SQL applied",
         manual: true,
       },
       {
@@ -326,6 +342,7 @@ export function DeploymentDebugPage() {
             </Panel>
 
             <RouteListPanel routes={demoRoutes} title="Demo routes" />
+            <RouteListPanel routes={adminRoutes} title="Admin auth routes" />
             <RouteListPanel routes={persistedRoutes} title="Persisted routes" />
           </aside>
         </section>
