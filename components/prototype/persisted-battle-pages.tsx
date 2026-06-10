@@ -1503,7 +1503,7 @@ function PersistedGuestExperience({
       setVoteState({
         status: "idle",
         message: voteSide
-          ? `Your saved vote is ${currentRound[voteSide].side.artistDisplayName}.`
+          ? `Your saved vote is ${currentRound[voteSide].side.artistDisplayName}. Results will be revealed by the host.`
           : getGuestVotingMessage(currentRound.round.status),
       });
     });
@@ -1566,7 +1566,7 @@ function PersistedGuestExperience({
     });
     setVoteState({
       status: "saved",
-      message: `Vote saved for ${voteTarget.side.artistDisplayName}. You can change it until voting closes.`,
+      message: `Vote locked in for ${voteTarget.side.artistDisplayName}. Results will be revealed by the host. You can change it until voting closes.`,
     });
   }
 
@@ -1723,6 +1723,11 @@ function PersistedGuestExperience({
                   <GuestVoteFeedback state={voteState} />
                 </Panel>
 
+                <GuestVotePrivacyPanel
+                  roundStatus={currentRound.round.status}
+                  selectedSide={selectedSide}
+                />
+
                 {currentRound.round.status === "revealed" ? (
                   <PersistedRevealCard
                     roundView={currentRound}
@@ -1736,6 +1741,7 @@ function PersistedGuestExperience({
                   onVote={votingIsOpen ? submitGuestVote : undefined}
                   roundView={currentRound}
                   selectedSide={selectedSide}
+                  showVoteTotals={canRevealVoteTotals(currentRound.round)}
                   setup={setup}
                   voteLabel={voteButtonLabel}
                 />
@@ -2942,6 +2948,42 @@ function GuestVoteFeedback({ state }: { state: GuestVoteState }) {
   );
 }
 
+function GuestVotePrivacyPanel({
+  roundStatus,
+  selectedSide,
+}: {
+  roundStatus: RoundStatus;
+  selectedSide: PersistedVoteSide | null;
+}) {
+  if (canRevealVoteTotals({ status: roundStatus })) {
+    return null;
+  }
+
+  const message =
+    roundStatus === "voting_closed"
+      ? "Voting is closed. Waiting for host to reveal the winner."
+      : selectedSide && roundStatus === "voting_open"
+        ? "Vote locked in. Results will be revealed by the host."
+        : "Vote totals will be revealed after the host announces the winner.";
+
+  return (
+    <Panel className="border-[#f7c948]/30 bg-[#f7c948]/10 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold uppercase text-[#ffe7a3]">
+            Results hidden
+          </p>
+          <h2 className="mt-1 text-xl font-bold text-white">
+            No live totals for guests
+          </h2>
+        </div>
+        <Pill tone="gold">Reveal pending</Pill>
+      </div>
+      <p className="mt-3 text-sm leading-6 text-zinc-300">{message}</p>
+    </Panel>
+  );
+}
+
 function PersistedRouteShell({
   eventSlug,
   mode,
@@ -3038,6 +3080,7 @@ function PersistedMatchupBoard({
   onVote,
   roundView,
   selectedSide,
+  showVoteTotals = true,
   setup,
   voteTotalsOverride,
   voteLabel = "Vote",
@@ -3046,6 +3089,7 @@ function PersistedMatchupBoard({
   onVote?: (side: PersistedVoteSide) => void;
   roundView: PersistedRoundView;
   selectedSide?: PersistedVoteSide | null;
+  showVoteTotals?: boolean;
   setup: LocalBattleSetup;
   voteTotalsOverride?: PersistedVoteTotals | RoundVoteTotals | null;
   voteLabel?: string;
@@ -3059,6 +3103,7 @@ function PersistedMatchupBoard({
         className={selectedSide === "sideOne" ? selectedClass.sideOne : ""}
         disabled={disabled}
         onAction={onVote ? () => onVote("sideOne") : undefined}
+        showVoteTotals={showVoteTotals}
         setup={setup}
         sideSong={roundView.sideOne}
         totals={voteTotals.sideOne}
@@ -3073,6 +3118,7 @@ function PersistedMatchupBoard({
         className={selectedSide === "sideTwo" ? selectedClass.sideTwo : ""}
         disabled={disabled}
         onAction={onVote ? () => onVote("sideTwo") : undefined}
+        showVoteTotals={showVoteTotals}
         setup={setup}
         sideSong={roundView.sideTwo}
         totals={voteTotals.sideTwo}
@@ -3086,6 +3132,7 @@ function PersistedSongCard({
   className = "",
   disabled,
   onAction,
+  showVoteTotals,
   setup,
   sideSong,
   totals,
@@ -3094,6 +3141,7 @@ function PersistedSongCard({
   className?: string;
   disabled?: boolean;
   onAction?: () => void;
+  showVoteTotals: boolean;
   setup: LocalBattleSetup;
   sideSong: PersistedSideSongView;
   totals: number;
@@ -3133,8 +3181,19 @@ function PersistedSongCard({
 
       <div className="mt-8 grid gap-4 sm:grid-cols-[1fr_auto] sm:items-end">
         <div>
-          <p className="text-sm text-zinc-500">Visible vote total</p>
-          <p className="mt-1 text-4xl font-black text-white">{totals}</p>
+          {showVoteTotals ? (
+            <>
+              <p className="text-sm text-zinc-500">Visible vote total</p>
+              <p className="mt-1 text-4xl font-black text-white">{totals}</p>
+            </>
+          ) : (
+            <>
+              <p className="text-sm text-zinc-500">Vote total</p>
+              <p className="mt-1 text-xl font-black text-white">
+                Hidden until reveal
+              </p>
+            </>
+          )}
         </div>
         <MockButton
           className="w-full sm:w-auto"
@@ -3355,6 +3414,7 @@ function PersistedPastResultsPreview({
         {roundViews.slice(0, 3).map((roundView) => {
           const winner = getPersistedWinner(roundView);
           const totals = getPersistedVoteTotals(roundView.round);
+          const totalsAreVisible = canRevealVoteTotals(roundView.round);
 
           return (
             <article
@@ -3374,7 +3434,9 @@ function PersistedPastResultsPreview({
                   </p>
                 </div>
                 <span className="shrink-0 rounded-md border border-white/10 bg-white/10 px-2 py-1 text-xs font-semibold text-zinc-300">
-                  {totals.sideOne}-{totals.sideTwo}
+                  {totalsAreVisible
+                    ? `${totals.sideOne}-${totals.sideTwo}`
+                    : "Hidden"}
                 </span>
               </div>
             </article>
@@ -3399,6 +3461,7 @@ function PersistedRoundResultCard({
 }) {
   const winner = getPersistedWinner(roundView);
   const totals = getPersistedVoteTotals(roundView.round);
+  const totalsAreVisible = canRevealVoteTotals(roundView.round);
   const sideConfig = winner
     ? getSideDisplay(setup, winner.side.internalSideValue)
     : null;
@@ -3422,10 +3485,18 @@ function PersistedRoundResultCard({
           </p>
         </div>
         <div className="rounded-lg border border-white/10 bg-white/10 px-4 py-3 text-right">
-          <p className="text-sm text-zinc-400">Votes</p>
-          <p className="mt-1 text-2xl font-black text-white">
-            {totals.sideOne}-{totals.sideTwo}
+          <p className="text-sm text-zinc-400">
+            {totalsAreVisible ? "Votes" : "Votes hidden"}
           </p>
+          {totalsAreVisible ? (
+            <p className="mt-1 text-2xl font-black text-white">
+              {totals.sideOne}-{totals.sideTwo}
+            </p>
+          ) : (
+            <p className="mt-1 text-sm font-bold text-zinc-300">
+              Revealed after host announcement
+            </p>
+          )}
         </div>
       </div>
     </article>
@@ -3743,19 +3814,19 @@ function getGuestPhaseDetails({
     case "voting_open":
       return {
         body: selectedSide
-          ? `Your current vote is ${currentRound[selectedSide].side.artistDisplayName}. You can change it until voting closes.`
-          : "Pick the side that won this round. You can change your vote until the host closes voting.",
+          ? `Your current vote is ${currentRound[selectedSide].side.artistDisplayName}. You can change it until voting closes. Live totals stay hidden until the host reveals the winner.`
+          : "Pick the side that won this round. You can change your vote until the host closes voting. Live totals stay hidden.",
         headline: "Voting is open.",
         label: "Vote now",
-        secondaryMessage: "",
+        secondaryMessage: "Results will be revealed by the host.",
         tone: "cyan" as const,
       };
     case "voting_closed":
       return {
         body: "Votes are locked while the host checks totals and gets ready for the reveal.",
-        headline: "Voting is closed. Waiting for reveal.",
+        headline: "Voting is closed. Waiting for host to reveal the winner.",
         label: "Locked",
-        secondaryMessage: "Voting is closed. Waiting for reveal.",
+        secondaryMessage: "Voting is closed. Waiting for host to reveal the winner.",
         tone: "gold" as const,
       };
     case "revealed":
@@ -3832,6 +3903,10 @@ function getVoteSide(roundView: PersistedRoundView, vote: Vote) {
 
 function getDisplayVoteTotals(roundView: PersistedRoundView) {
   return getPersistedVoteTotals(roundView.round);
+}
+
+function canRevealVoteTotals(round: Pick<Round, "status">) {
+  return round.status === "revealed" || round.status === "complete";
 }
 
 function getPersistedVoteTotals(round: Round): PersistedVoteTotals {
@@ -3953,7 +4028,7 @@ function getEventStatusTone(status: EventStatus) {
 
 function getGuestStatusHeadline(status?: RoundStatus) {
   if (status === "voting_closed") {
-    return "Voting is closed. Waiting for reveal.";
+    return "Voting is closed. Waiting for host to reveal the winner.";
   }
 
   if (status === "revealed") {
@@ -3969,11 +4044,11 @@ function getGuestStatusHeadline(status?: RoundStatus) {
 
 function getGuestVotingMessage(status?: RoundStatus) {
   if (status === "voting_open") {
-    return "Voting is open. You can change your vote until the host closes voting.";
+    return "Voting is open. You can change your vote until the host closes voting. Results will be revealed by the host.";
   }
 
   if (status === "voting_closed") {
-    return "Voting is closed. Waiting for reveal.";
+    return "Voting is closed. Waiting for host to reveal the winner.";
   }
 
   if (status === "revealed") {

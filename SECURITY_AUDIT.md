@@ -21,6 +21,10 @@ Last updated: 2026-06-09
   until RLS is fully reviewed.
 - Client-side profanity filtering improves UX but is not security. Malicious
   clients can bypass it until chat writes are protected server-side/RLS-side.
+- Guest vote totals are now hidden in the guest/results UI until a round is
+  revealed, but the current MVP can still load round rows in the browser. Treat
+  this as UX-level concealment until a future server/RLS phase prevents
+  unrevealed vote-count reads for guest clients.
 
 ## Fixes Completed In Security Hardening Phase 1
 
